@@ -6,6 +6,48 @@ Um app web (PWA em Nuxt 4) mostra, em tempo real, um alerta visual gigante
 em tela (icone + texto grande + flash), junto com historico e status de
 cada ESP32 (online/offline).
 
+## Como o sistema funciona (visão geral)
+
+```mermaid
+flowchart LR
+    MIC[Microfone INMP441] --> ESP32
+    subgraph ESP32[ESP32]
+        DSP[Modelo Edge Impulse\nclassifica o som]
+        LED[LED WS2812B\nfeedback local]
+        DSP --> LED
+    end
+    ESP32 -- "HTTPS POST\n(evento detectado)" --> DB[(Supabase\nPostgres)]
+    ESP32 -- "HTTPS POST a cada 30s\n(heartbeat / esta online)" --> DB
+    DB -- "Realtime\n(WebSocket)" --> WEB[App Web\nNuxt 4 PWA]
+    WEB --> USR[Usuário\nalerta visual em tela]
+```
+
+1. O microfone (INMP441, via I2S) captura áudio continuamente no ESP32.
+2. O modelo treinado no Edge Impulse classifica cada janela de áudio como
+   `palma`, `campainha` ou `ruído`.
+3. Ao detectar `palma` ou `campainha` com confiança suficiente, o ESP32
+   grava o evento na tabela `eventos` do Supabase (via HTTPS/REST) e pisca
+   o LED local.
+4. A cada 30 segundos, o ESP32 também atualiza a tabela `nodes` com um
+   "sinal de vida" (heartbeat), independente de ter detectado som ou não.
+5. O Supabase distribui essas mudanças em tempo real (Realtime, via
+   WebSocket) para quem estiver com o app aberto.
+6. O app web (PWA em Nuxt) escuta esse canal e, ao chegar um evento nesse
+   momento: pisca a tela inteira com ícone e texto grande, guarda no
+   histórico e atualiza o status online/offline do nó.
+
+## Tecnologias usadas
+
+- **ESP32 + Arduino/C++**: leitura do microfone via I2S, controle do LED
+  WS2812B e comunicação HTTPS com o Supabase.
+- **Edge Impulse**: treinamento e inferência do modelo de classificação de
+  som (embarcado no firmware via a biblioteca `alerta-sons_inferencing`).
+- **Supabase**: banco Postgres gerenciado, API REST automática (PostgREST),
+  Realtime (WebSocket) e Row Level Security (RLS).
+- **Nuxt 4 (Vue 3)**: framework do app web, como PWA (`@vite-pwa/nuxt`).
+- **TypeScript**: tipagem do código do app web.
+- **pnpm/npm**: gerenciador de pacotes do app web.
+
 ## Estrutura do projeto
 
 - `firmware/alerta-sons-esp32.ino`: codigo do ESP32 (Arduino).
