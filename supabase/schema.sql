@@ -33,6 +33,10 @@ create policy "nodes: insercao publica" on public.nodes for insert with check (t
 create policy "eventos: atualizacao publica" on public.eventos for update using (true);
 create policy "nodes: atualizacao publica" on public.nodes for update using (true);
 
+-- Delecao publica (limpar eventos de teste, remover um no antigo)
+create policy "eventos: delecao publica" on public.eventos for delete using (true);
+create policy "nodes: delecao publica" on public.nodes for delete using (true);
+
 -- Realtime: sem isso o app nao recebe os eventos ao vivo
 alter publication supabase_realtime add table public.eventos;
 alter publication supabase_realtime add table public.nodes;

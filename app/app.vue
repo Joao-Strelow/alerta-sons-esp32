@@ -136,80 +136,117 @@ onMounted(async () => {
     </div>
 
     <header>
-      <h1>Alerta de Sons ESP32</h1>
+      <div class="titulo">
+        <h1>🔊 Alerta de Sons</h1>
+        <p class="subtitulo">Monitoramento acessível por ESP32 + Supabase</p>
+      </div>
       <span class="status" :class="statusRealtime === 'SUBSCRIBED' ? 'on' : 'off'">
+        <span class="bolinha" />
         {{ statusRealtime === 'SUBSCRIBED' ? 'ao vivo' : statusRealtime }}
       </span>
     </header>
 
     <!-- Status de cada no (ESP32) conhecido -->
-    <section class="nos">
-      <span v-for="id in nodesConhecidos" :key="id" class="no-chip" :class="noOnline(id) ? 'on' : 'off'">
-        {{ id }} · {{ noOnline(id) ? 'online' : 'offline' }}
-      </span>
+    <section class="cartao">
+      <h2>Dispositivos</h2>
+      <div class="nos">
+        <span v-for="id in nodesConhecidos" :key="id" class="no-chip" :class="noOnline(id) ? 'on' : 'off'">
+          <span class="bolinha" />
+          {{ id }} · {{ noOnline(id) ? 'online' : 'offline' }}
+        </span>
+        <span v-if="!nodesConhecidos.length" class="vazio-inline">Nenhum dispositivo visto ainda</span>
+      </div>
     </section>
 
-    <!-- Filtros do historico -->
-    <section class="filtros">
-      <select v-model="filtroTipo">
-        <option value="todos">Todos os tipos</option>
-        <option value="campainha">Campainha</option>
-        <option value="palma">Palma</option>
-      </select>
-      <select v-model="filtroNode">
-        <option value="todos">Todos os nos</option>
-        <option v-for="id in nodesConhecidos" :key="id" :value="id">{{ id }}</option>
-      </select>
+    <!-- Historico de eventos com filtros -->
+    <section class="cartao">
+      <div class="cartao-header">
+        <h2>Histórico</h2>
+        <div class="filtros">
+          <select v-model="filtroTipo">
+            <option value="todos">Todos os tipos</option>
+            <option value="campainha">Campainha</option>
+            <option value="palma">Palma</option>
+          </select>
+          <select v-model="filtroNode">
+            <option value="todos">Todos os nós</option>
+            <option v-for="id in nodesConhecidos" :key="id" :value="id">{{ id }}</option>
+          </select>
+        </div>
+      </div>
+
+      <p v-if="erroMsg" class="erro">{{ erroMsg }}</p>
+      <p v-else-if="!eventosFiltrados.length" class="vazio">Aguardando sons…</p>
+
+      <ul v-else class="lista">
+        <li v-for="ev in eventosFiltrados" :key="ev.id" :class="{ visto: ev.visto }">
+          <span class="icone">{{ ICONES[ev.tipo] ?? '🔊' }}</span>
+          <div class="info">
+            <span class="tipo">{{ ev.tipo }}</span>
+            <span class="tag">{{ ev.node_id }}</span>
+          </div>
+          <span class="hora">{{ hora(ev.created_at) }}</span>
+          <button v-if="!ev.visto" class="btn-visto" @click="marcarVisto(ev)">Marcar como visto</button>
+          <span v-else class="ja-visto">visto</span>
+        </li>
+      </ul>
     </section>
-
-    <p v-if="erroMsg" class="erro">{{ erroMsg }}</p>
-    <p v-else-if="!eventosFiltrados.length" class="vazio">Aguardando sons…</p>
-
-    <ul class="lista">
-      <li v-for="ev in eventosFiltrados" :key="ev.id" :class="{ visto: ev.visto }">
-        <span class="icone">{{ ICONES[ev.tipo] ?? '🔊' }}</span>
-        <span class="tag">{{ ev.node_id }}</span>
-        <span class="tipo">{{ ev.tipo }}</span>
-        <span class="hora">{{ hora(ev.created_at) }}</span>
-        <button v-if="!ev.visto" class="btn-visto" @click="marcarVisto(ev)">Marcar como visto</button>
-      </li>
-    </ul>
   </div>
 </template>
 
 <style>
 * { box-sizing: border-box; }
 body { margin: 0; }
-.app { min-height: 100vh; background: #0d1b2a; color: #e8eef5;
-       font-family: system-ui, sans-serif; padding: 20px; }
-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-h1 { font-size: 20px; margin: 0; }
-.status { font-size: 12px; padding: 2px 8px; border-radius: 6px; }
-.status.on { background: #1f7a3f; }
-.status.off { background: #7a3f1f; }
 
-.nos { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
-.no-chip { font-size: 12px; padding: 4px 10px; border-radius: 6px; }
-.no-chip.on { background: #1f7a3f; }
-.no-chip.off { background: #7a3f1f; }
+.app { min-height: 100vh; background: #0b1622; color: #e8eef5;
+       font-family: system-ui, -apple-system, sans-serif;
+       padding: 24px 16px 60px; }
 
-.filtros { display: flex; gap: 10px; margin-top: 16px; }
+header { max-width: 720px; margin: 0 auto 24px; display: flex;
+         justify-content: space-between; align-items: flex-start; gap: 12px; }
+h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
+.subtitulo { margin: 4px 0 0; font-size: 13px; opacity: .6; }
+
+.status { display: flex; align-items: center; gap: 6px; font-size: 12px;
+          font-weight: 600; padding: 6px 12px; border-radius: 20px; white-space: nowrap; }
+.status.on { background: #113a24; color: #4ade80; }
+.status.off { background: #3a1f1f; color: #f87171; }
+.bolinha { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+.cartao { max-width: 720px; margin: 0 auto 16px; background: #101d2e;
+          border: 1px solid #1c2c42; border-radius: 16px; padding: 18px 20px; }
+.cartao h2 { font-size: 14px; margin: 0 0 12px; opacity: .7; text-transform: uppercase; letter-spacing: .5px; }
+.cartao-header { display: flex; flex-wrap: wrap; justify-content: space-between;
+                  align-items: center; gap: 10px; margin-bottom: 4px; }
+.cartao-header h2 { margin: 0; }
+
+.nos { display: flex; gap: 8px; flex-wrap: wrap; }
+.no-chip { display: flex; align-items: center; gap: 6px; font-size: 13px;
+           font-weight: 500; padding: 6px 12px; border-radius: 20px; }
+.no-chip.on { background: #113a24; color: #4ade80; }
+.no-chip.off { background: #3a1f1f; color: #f87171; }
+.vazio-inline { font-size: 13px; opacity: .5; }
+
+.filtros { display: flex; gap: 8px; }
 .filtros select { background: #16233a; color: #e8eef5; border: 1px solid #2a3a56;
-                   border-radius: 8px; padding: 8px 10px; }
+                   border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 
-.erro { background: #5a1f1f; padding: 12px 14px; border-radius: 8px; margin-top: 20px; }
-.vazio { opacity: .6; margin-top: 40px; text-align: center; }
+.erro { background: #3a1f1f; color: #fca5a5; padding: 12px 14px; border-radius: 10px; }
+.vazio { opacity: .5; padding: 24px 0; text-align: center; font-size: 14px; }
 
-.lista { list-style: none; padding: 0; margin: 20px 0 0; }
+.lista { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .lista li { display: flex; gap: 12px; align-items: center; padding: 12px 14px;
-            margin-bottom: 8px; background: #16233a; border-radius: 10px; }
-.lista li.visto { opacity: .5; }
-.icone { font-size: 20px; }
-.tag { background: #3a86ff; padding: 2px 8px; border-radius: 6px; font-size: 12px; }
-.tipo { font-weight: 600; text-transform: capitalize; }
-.hora { margin-left: auto; opacity: .6; font-size: 13px; }
+            background: #16233a; border-radius: 12px; transition: opacity .2s; }
+.lista li.visto { opacity: .45; }
+.icone { font-size: 24px; line-height: 1; }
+.info { display: flex; flex-direction: column; gap: 2px; }
+.tipo { font-weight: 600; text-transform: capitalize; font-size: 14px; }
+.tag { font-size: 11px; opacity: .55; }
+.hora { margin-left: auto; opacity: .55; font-size: 12px; }
 .btn-visto { background: #3a86ff; color: #fff; border: 0; border-radius: 8px;
-             padding: 6px 10px; font-size: 12px; cursor: pointer; }
+             padding: 7px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.btn-visto:hover { background: #5b9dff; }
+.ja-visto { font-size: 11px; opacity: .5; }
 
 /* Alerta em tela cheia: fonte enorme, alto contraste, icone + texto */
 .flash { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column;
@@ -217,8 +254,14 @@ h1 { font-size: 20px; margin: 0; }
          animation: pisca .4s steps(2, start) infinite; }
 .flash.campainha { background: #ffb300; color: #1a1300; }
 .flash.palma { background: #ff3b3b; color: #fff; }
-.flash-icone { font-size: 120px; }
+.flash-icone { font-size: 130px; filter: drop-shadow(0 8px 24px rgba(0,0,0,.25)); }
 .flash-texto { font-size: 48px; font-weight: 800; letter-spacing: 2px; }
-.flash-no { font-size: 20px; opacity: .8; }
+.flash-no { font-size: 18px; opacity: .8; }
 @keyframes pisca { 0% { opacity: 1; } 100% { opacity: .55; } }
+
+@media (max-width: 480px) {
+  h1 { font-size: 22px; }
+  .flash-icone { font-size: 90px; }
+  .flash-texto { font-size: 34px; }
+}
 </style>

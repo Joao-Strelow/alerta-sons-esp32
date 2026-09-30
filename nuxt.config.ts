@@ -1,5 +1,10 @@
 export default defineNuxtConfig({
   modules: ['@vite-pwa/nuxt'],
+  app: {
+    head: {
+      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+    },
+  },
   runtimeConfig: {
     public: {
       supabaseUrl: '',   // preenchido por NUXT_PUBLIC_SUPABASE_URL
