@@ -127,12 +127,27 @@ bool garantirWiFi(uint32_t timeoutMs) {
 
 // ===================== SUPABASE =====================
 
+SemaphoreHandle_t mutexRede;   // garante que so uma conexao HTTPS roda por vez (poupa RAM)
+
+// Pausa so a captura de audio (sem reiniciar o classificador), liberando a CPU/RAM
+// para a conexao HTTPS enquanto ela dura
+void pausarCapturaLeve() {
+  capturaAtiva = false;
+  while (!capturaParada) delay(5);
+}
+
+void retomarCapturaLeve() {
+  capturaAtiva = true;
+}
+
 int enviarEventoSupabase(const char* tipo, float conf) {
   if (!garantirWiFi(8000)) return -1;
 
+  xSemaphoreTake(mutexRede, portMAX_DELAY);
+  pausarCapturaLeve();
+
   WiFiClientSecure client;
   client.setInsecure();
-  client.setBufferSizes(512, 512);   // buffers TLS pequenos: sobra RAM para a inferencia
   HTTPClient https;
   https.begin(client, String(SUPABASE_URL) + "/rest/v1/eventos");
   https.addHeader("apikey", SUPABASE_KEY);
@@ -146,6 +161,9 @@ int enviarEventoSupabase(const char* tipo, float conf) {
                  "\",\"intensidade\":" + intensidade + "}";
   int code = https.POST(corpo);
   https.end();
+
+  retomarCapturaLeve();
+  xSemaphoreGive(mutexRede);
   return code;
 }
 
@@ -153,9 +171,11 @@ int enviarEventoSupabase(const char* tipo, float conf) {
 int enviarHeartbeatSupabase() {
   if (!garantirWiFi(8000)) return -1;
 
+  xSemaphoreTake(mutexRede, portMAX_DELAY);
+  pausarCapturaLeve();
+
   WiFiClientSecure client;
   client.setInsecure();
-  client.setBufferSizes(512, 512);   // buffers TLS pequenos: sobra RAM para a inferencia
   HTTPClient https;
   https.begin(client, String(SUPABASE_URL) + "/rest/v1/nodes?on_conflict=node_id");
   https.addHeader("apikey", SUPABASE_KEY);
@@ -166,6 +186,9 @@ int enviarHeartbeatSupabase() {
   String corpo = String("{\"node_id\":\"") + NODE_ID + "\",\"last_seen\":\"now()\"}";
   int code = https.POST(corpo);
   https.end();
+
+  retomarCapturaLeve();
+  xSemaphoreGive(mutexRede);
   return code;
 }
 
@@ -619,6 +642,7 @@ void setup() {
   }
 
   i2sInit();
+  mutexRede = xSemaphoreCreateMutex();
   filaEventos = xQueueCreate(4, sizeof(Evento));
   xTaskCreate(capture_samples, "Captura", 8192, NULL, 10, NULL);
   xTaskCreate(tarefaAcoes, "Acoes", 16384, NULL, 1, NULL);
