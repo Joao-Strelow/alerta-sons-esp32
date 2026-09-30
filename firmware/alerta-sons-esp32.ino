@@ -132,6 +132,7 @@ int enviarEventoSupabase(const char* tipo, float conf) {
 
   WiFiClientSecure client;
   client.setInsecure();
+  client.setBufferSizes(512, 512);   // buffers TLS pequenos: sobra RAM para a inferencia
   HTTPClient https;
   https.begin(client, String(SUPABASE_URL) + "/rest/v1/eventos");
   https.addHeader("apikey", SUPABASE_KEY);
@@ -154,6 +155,7 @@ int enviarHeartbeatSupabase() {
 
   WiFiClientSecure client;
   client.setInsecure();
+  client.setBufferSizes(512, 512);   // buffers TLS pequenos: sobra RAM para a inferencia
   HTTPClient https;
   https.begin(client, String(SUPABASE_URL) + "/rest/v1/nodes?on_conflict=node_id");
   https.addHeader("apikey", SUPABASE_KEY);
