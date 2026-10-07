@@ -61,19 +61,22 @@ function noOnline(nodeId: string) {
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR')
 
-// Dispara o alerta visual (flash + vibracao) para um evento novo
+// Dispara o alerta visual (fica piscando ate confirmar ou chegar outro evento)
 function alertar(ev: Evento) {
   flash.value = ev
   navigator.vibrate?.([200, 100, 200, 100, 200])
-  setTimeout(() => {
-    if (flash.value?.id === ev.id) flash.value = null
-  }, 2500)
 }
 
-// Marca um evento como visto (usado por quem esta gerenciando os alertas)
+// Marca um evento como visto (usado tanto pela lista quanto pelo botao do alerta)
 async function marcarVisto(ev: Evento) {
   ev.visto = true
   await sb.from('eventos').update({ visto: true }).eq('id', ev.id)
+}
+
+// Confirma que a pessoa viu o alerta em tela cheia e fecha ele
+function confirmarAlerta() {
+  if (flash.value) marcarVisto(flash.value)
+  flash.value = null
 }
 
 // Busca o historico de eventos e o estado atual dos nos
@@ -128,11 +131,12 @@ onMounted(async () => {
 
 <template>
   <div class="app">
-    <!-- Alerta visual em tela cheia: icone + texto grande, nao so cor -->
-    <div v-if="flash" class="flash" :class="flash.tipo">
+    <!-- Alerta visual em tela cheia: pisca ate confirmar ou chegar outro evento -->
+    <div v-if="flash" class="flash" :class="flash.tipo" @click="confirmarAlerta">
       <span class="flash-icone">{{ ICONES[flash.tipo] ?? '🔊' }}</span>
       <span class="flash-texto">{{ flash.tipo.toUpperCase() }}</span>
       <span class="flash-no">{{ flash.node_id }}</span>
+      <button class="btn-confirmar" @click.stop="confirmarAlerta">✓ Confirmar que vi</button>
     </div>
 
     <header>
@@ -257,11 +261,16 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
 .flash-icone { font-size: 130px; filter: drop-shadow(0 8px 24px rgba(0,0,0,.25)); }
 .flash-texto { font-size: 48px; font-weight: 800; letter-spacing: 2px; }
 .flash-no { font-size: 18px; opacity: .8; }
+.btn-confirmar { margin-top: 24px; background: rgba(0, 0, 0, .25); color: inherit;
+                 border: 2px solid currentColor; border-radius: 999px;
+                 padding: 14px 28px; font-size: 18px; font-weight: 700; cursor: pointer; }
+.btn-confirmar:hover { background: rgba(0, 0, 0, .4); }
 @keyframes pisca { 0% { opacity: 1; } 100% { opacity: .55; } }
 
 @media (max-width: 480px) {
   h1 { font-size: 22px; }
   .flash-icone { font-size: 90px; }
   .flash-texto { font-size: 34px; }
+  .btn-confirmar { font-size: 16px; padding: 12px 22px; }
 }
 </style>
