@@ -257,7 +257,7 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
 /* Alerta em tela cheia: fonte enorme, alto contraste, icone + texto */
 .flash { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column;
          align-items: center; justify-content: center; gap: 10px;
-         animation: pisca .4s steps(2, start) infinite;
+         animation: pisca .8s linear infinite;
          will-change: opacity; }
 .flash.campainha { background: #ffb300; color: #1a1300; }
 .flash.palma { background: #ff3b3b; color: #fff; }
@@ -268,7 +268,7 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
                  border: 2px solid currentColor; border-radius: 999px;
                  padding: 14px 28px; font-size: 18px; font-weight: 700; cursor: pointer; }
 .btn-confirmar:hover { background: rgba(0, 0, 0, .4); }
-@keyframes pisca { 0% { opacity: 1; } 100% { opacity: .55; } }
+@keyframes pisca { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .55; } }
 
 @media (max-width: 480px) {
   h1 { font-size: 22px; }
