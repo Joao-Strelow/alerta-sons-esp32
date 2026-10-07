@@ -99,6 +99,7 @@ function assinarRealtime() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'eventos' }, (payload) => {
       const ev = payload.new as Evento
       eventos.value.unshift(ev)
+      if (eventos.value.length > 50) eventos.value.pop()   // mantem a lista curta e leve
       alertar(ev)
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'nodes' }, (payload) => {
@@ -240,7 +241,8 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
 
 .lista { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .lista li { display: flex; gap: 12px; align-items: center; padding: 12px 14px;
-            background: #16233a; border-radius: 12px; transition: opacity .2s; }
+            background: #16233a; border-radius: 12px; transition: opacity .2s;
+            contain: content; }
 .lista li.visto { opacity: .45; }
 .icone { font-size: 24px; line-height: 1; }
 .info { display: flex; flex-direction: column; gap: 2px; }
@@ -255,7 +257,8 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
 /* Alerta em tela cheia: fonte enorme, alto contraste, icone + texto */
 .flash { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column;
          align-items: center; justify-content: center; gap: 10px;
-         animation: pisca .4s steps(2, start) infinite; }
+         animation: pisca .4s steps(2, start) infinite;
+         will-change: opacity; }
 .flash.campainha { background: #ffb300; color: #1a1300; }
 .flash.palma { background: #ff3b3b; color: #fff; }
 .flash-icone { font-size: 130px; filter: drop-shadow(0 8px 24px rgba(0,0,0,.25)); }
