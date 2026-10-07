@@ -28,6 +28,7 @@ const ICONES: Record<string, string> = {
 const eventos = ref<Evento[]>([])
 const nodes = ref<Node[]>([])
 const flash = ref<Evento | null>(null)
+const piscando = ref(false)   // pisca so nos primeiros 3s, depois fica fixo ate confirmar
 const statusRealtime = ref('desconectado')
 const erroMsg = ref('')
 const filtroTipo = ref('todos')
@@ -61,10 +62,14 @@ function noOnline(nodeId: string) {
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR')
 
-// Dispara o alerta visual (fica piscando ate confirmar ou chegar outro evento)
+// Dispara o alerta visual: pisca por 3s, depois fica fixo em tela ate confirmar
 function alertar(ev: Evento) {
   flash.value = ev
+  piscando.value = true
   navigator.vibrate?.([200, 100, 200, 100, 200])
+  setTimeout(() => {
+    if (flash.value?.id === ev.id) piscando.value = false
+  }, 3000)
 }
 
 // Marca um evento como visto (usado tanto pela lista quanto pelo botao do alerta)
@@ -133,7 +138,7 @@ onMounted(async () => {
 <template>
   <div class="app">
     <!-- Alerta visual em tela cheia: pisca ate confirmar ou chegar outro evento -->
-    <div v-if="flash" class="flash" :class="flash.tipo" @click="confirmarAlerta">
+    <div v-if="flash" class="flash" :class="[flash.tipo, { piscando }]" @click="confirmarAlerta">
       <span class="flash-icone">{{ ICONES[flash.tipo] ?? '🔊' }}</span>
       <span class="flash-texto">{{ flash.tipo.toUpperCase() }}</span>
       <span class="flash-no">{{ flash.node_id }}</span>
@@ -256,9 +261,8 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
 
 /* Alerta em tela cheia: fonte enorme, alto contraste, icone + texto */
 .flash { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column;
-         align-items: center; justify-content: center; gap: 10px;
-         animation: pisca .8s linear infinite;
-         will-change: opacity; }
+         align-items: center; justify-content: center; gap: 10px; }
+.flash.piscando { animation: pisca .8s linear infinite; will-change: opacity; }
 .flash.campainha { background: #ffb300; color: #1a1300; }
 .flash.palma { background: #ff3b3b; color: #fff; }
 .flash-icone { font-size: 130px; filter: drop-shadow(0 8px 24px rgba(0,0,0,.25)); }
