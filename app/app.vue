@@ -33,6 +33,8 @@ const erroMsg = ref('')
 const filtroTipo = ref('todos')
 const filtroNode = ref('todos')
 const agora = ref(Date.now())
+const telegramChatId = ref('')
+const telegramSalvo = ref(false)
 
 let sb: SupabaseClient
 
@@ -82,11 +84,12 @@ function confirmarAlerta() {
   flash.value = null
 }
 
-// Busca o historico de eventos e o estado atual dos nos
+// Busca o historico de eventos, o estado atual dos nos e a config do Telegram
 async function carregarDados() {
-  const [{ data: ev, error: erroEv }, { data: nd, error: erroNd }] = await Promise.all([
+  const [{ data: ev, error: erroEv }, { data: nd, error: erroNd }, { data: cfg }] = await Promise.all([
     sb.from('eventos').select('*').order('created_at', { ascending: false }).limit(50),
     sb.from('nodes').select('*'),
+    sb.from('config').select('telegram_chat_id').eq('id', 1).single(),
   ])
   if (erroEv || erroNd) {
     erroMsg.value = `Erro ao carregar dados: ${erroEv?.message ?? erroNd?.message}`
@@ -94,6 +97,14 @@ async function carregarDados() {
   }
   eventos.value = (ev ?? []) as Evento[]
   nodes.value = (nd ?? []) as Node[]
+  telegramChatId.value = cfg?.telegram_chat_id ?? ''
+}
+
+// Salva o chat_id do Telegram para onde os alertas devem ser mandados
+async function salvarTelegram() {
+  await sb.from('config').update({ telegram_chat_id: telegramChatId.value || null }).eq('id', 1)
+  telegramSalvo.value = true
+  setTimeout(() => (telegramSalvo.value = false), 2000)
 }
 
 // Assina as mudancas em tempo real das tabelas eventos e nodes
@@ -199,6 +210,22 @@ onMounted(async () => {
         </li>
       </ul>
     </section>
+
+    <!-- Configuracao do alerta no Telegram -->
+    <section class="cartao">
+      <h2>Alerta no Telegram</h2>
+      <p class="ajuda">
+        Fale com <strong>@userinfobot</strong> no Telegram para descobrir seu
+        chat ID, cole aqui e salve. Toda campainha ou palma detectada tambem
+        vai chegar como mensagem no seu celular.
+      </p>
+      <div class="telegram-form">
+        <input v-model="telegramChatId" placeholder="Seu chat ID do Telegram" />
+        <button class="btn-visto" @click="salvarTelegram">
+          {{ telegramSalvo ? 'Salvo ✓' : 'Salvar' }}
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -256,6 +283,11 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.5px; }
              padding: 7px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
 .btn-visto:hover { background: #5b9dff; }
 .ja-visto { font-size: 11px; opacity: .5; }
+
+.ajuda { font-size: 13px; opacity: .65; margin: 0 0 12px; line-height: 1.5; }
+.telegram-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.telegram-form input { flex: 1; min-width: 180px; background: #16233a; color: #e8eef5;
+                        border: 1px solid #2a3a56; border-radius: 8px; padding: 9px 12px; font-size: 14px; }
 
 /* Alerta em tela cheia: fonte enorme, alto contraste, icone + texto */
 .flash { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column;

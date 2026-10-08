@@ -40,3 +40,16 @@ create policy "nodes: delecao publica" on public.nodes for delete using (true);
 -- Realtime: sem isso o app nao recebe os eventos ao vivo
 alter publication supabase_realtime add table public.eventos;
 alter publication supabase_realtime add table public.nodes;
+
+-- Tabela de configuracao (so uma linha fixa, id = 1) com o chat_id do
+-- Telegram de quem recebe os alertas no celular
+create table if not exists public.config (
+  id int primary key default 1,
+  telegram_chat_id text,
+  constraint config_singleton check (id = 1)
+);
+insert into public.config (id) values (1) on conflict (id) do nothing;
+
+alter table public.config enable row level security;
+create policy "config: leitura publica" on public.config for select using (true);
+create policy "config: atualizacao publica" on public.config for update using (true);

@@ -2,6 +2,7 @@
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <WiFiManager.h>
 #include <HTTPClient.h>
 #include <Adafruit_NeoPixel.h>
 #include <alerta-sons_inferencing.h>
@@ -21,9 +22,13 @@
 // ----- Nó -----
 #define NODE_ID "no1"                 // "no2" no segundo ESP32
 
-// ----- WiFi (somente 2.4 GHz) -----
-const char* WIFI_SSID = "AMIGO_JULIA";
-const char* WIFI_PASS = "juliabrt";
+// ----- WiFi -----
+// Nao ha mais SSID/senha fixos no codigo: na primeira vez (ou apos "w" no
+// serial), o ESP32 cria uma rede propria "AlertaSons-Setup" por alguns
+// minutos. Conecte o celular nela, escolha a rede WiFi do lugar numa pagina
+// que abre automaticamente, e pronto - fica salvo no proprio ESP32.
+#define WIFI_AP_NOME "AlertaSons-Setup"
+#define WIFI_PORTAL_TIMEOUT_S 180      // tempo que a rede de configuracao fica ligada
 
 // ----- Supabase -----
 const char* SUPABASE_URL = "https://<seu-projeto>.supabase.co";
@@ -35,8 +40,8 @@ const char* SUPABASE_KEY = "<chave anon/publishable>";
 const char* EI_API_KEY = "ei_8a0a277b7f230c9d4c359136a0e114c3c5826198dfa922d7";
 
 // ----- Detecção -----
-#define CONFIANCA_MIN 0.80            // confiança mínima (0.0 a 1.0) para considerar detecção
-#define COOLDOWN      3000            // ms mínimos entre dois eventos
+#define CONFIANCA_MIN 0.99            // confiança mínima (0.0 a 1.0) para considerar detecção
+#define COOLDOWN      5000            // ms mínimos entre dois eventos
 
 // ----- Microfone INMP441 (I2S) -----
 #define I2S_SCK 33
@@ -89,9 +94,7 @@ unsigned long ultimoEvento = 0;
 int aquecimento = EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW;
 int print_results = -(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW);
 
-// buffers usados só durante a gravação de amostras
-uint8_t* wav = NULL;
-uint8_t* corpoHttp = NULL;
+// usados só durante a gravação de amostras
 int contador = 0;
 int ultimoPico = 0;
 int ultimoRms = 0;
@@ -112,11 +115,20 @@ void piscar(uint8_t r, uint8_t g, uint8_t b, int vezes, int ms) {
 
 // ===================== WIFI =====================
 
+// Abre o portal de configuracao (rede "AlertaSons-Setup") so quando preciso.
+// Usado no boot e pelo comando serial "w" (trocar de rede manualmente).
+bool abrirPortalWiFi() {
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
+  return wm.autoConnect(WIFI_AP_NOME);
+}
+
+// Reconexao rapida usando a ultima rede salva (sem abrir portal) - usada
+// antes de cada chamada de rede, caso o WiFi tenha caido no meio do uso.
 bool garantirWiFi(uint32_t timeoutMs) {
   if (WiFi.status() == WL_CONNECTED) return true;
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin();   // reusa a ultima rede/senha salva na memoria do ESP32
   uint32_t ini = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - ini < timeoutMs) {
     delay(300);
@@ -214,6 +226,8 @@ void tarefaAcoes(void* arg) {
       else         piscar(255, 180, 0, 3, 120);    // amarelo = campainha
 
       if (enviarSupabase) {
+        // o Supabase manda o alerta pro Telegram da pessoa sozinho
+        // (webhook configurado no painel, ver README) - o firmware so grava o evento
         int code = enviarEventoSupabase(ev.tipo, ev.conf);
         Serial.printf("Supabase POST %s -> %d\n", ev.tipo, code);
         if (code >= 200 && code < 300) piscar(0, 200, 200, 1, 150);   // ciano = enviado
@@ -414,35 +428,19 @@ void monitorarMic() {
 }
 
 // ===================== GRAVAR AMOSTRAS PARA O EDGE IMPULSE =====================
+// O áudio vai em streaming do microfone direto para a conexão HTTPS,
+// sem guardar o WAV na RAM (o buffer de 32 KB impedia o handshake TLS).
 
-bool alocarBuffersCaptura() {
-  wav = (uint8_t*)malloc(44 + N_SAMPLES * 2);
-  corpoHttp = (uint8_t*)malloc(44 + N_SAMPLES * 2 + 512);
-  if (wav == NULL || corpoHttp == NULL) {
-    if (wav) free(wav);
-    if (corpoHttp) free(corpoHttp);
-    wav = NULL; corpoHttp = NULL;
-    return false;
-  }
-  return true;
-}
-
-void liberarBuffersCaptura() {
-  if (wav) free(wav);
-  if (corpoHttp) free(corpoHttp);
-  wav = NULL; corpoHttp = NULL;
-}
-
-void escreverCabecalhoWav() {
+void escreverCabecalhoWav(uint8_t* h) {
   uint32_t dataBytes = N_SAMPLES * 2;
   uint32_t chunk = 36 + dataBytes, sub1 = 16, sr = SAMPLE_RATE, br = SAMPLE_RATE * 2;
   uint16_t fmt = 1, ch = 1, ba = 2, bps = 16;
-  memcpy(wav,      "RIFF", 4); memcpy(wav + 4,  &chunk, 4);
-  memcpy(wav + 8,  "WAVEfmt ", 8); memcpy(wav + 16, &sub1, 4);
-  memcpy(wav + 20, &fmt, 2);   memcpy(wav + 22, &ch, 2);
-  memcpy(wav + 24, &sr, 4);    memcpy(wav + 28, &br, 4);
-  memcpy(wav + 32, &ba, 2);    memcpy(wav + 34, &bps, 2);
-  memcpy(wav + 36, "data", 4); memcpy(wav + 40, &dataBytes, 4);
+  memcpy(h,      "RIFF", 4); memcpy(h + 4,  &chunk, 4);
+  memcpy(h + 8,  "WAVEfmt ", 8); memcpy(h + 16, &sub1, 4);
+  memcpy(h + 20, &fmt, 2);   memcpy(h + 22, &ch, 2);
+  memcpy(h + 24, &sr, 4);    memcpy(h + 28, &br, 4);
+  memcpy(h + 32, &ba, 2);    memcpy(h + 34, &bps, 2);
+  memcpy(h + 36, "data", 4); memcpy(h + 40, &dataBytes, 4);
 }
 
 // Descarta ~0,5s de áudio: limpa o buffer antigo e deixa o mic estabilizar
@@ -452,93 +450,109 @@ void descartar() {
   for (int i = 0; i < 32; i++) i2s_read(I2S_PORT, raw, sizeof(raw), &br, portMAX_DELAY);
 }
 
-// Grava exatamente 1 segundo
-void gravar() {
-  int16_t* pcm = (int16_t*)(wav + 44);
-  size_t br;
+// Abre a conexão, grava 1 segundo enviando direto e devolve o código HTTP
+int gravarEEnviarAmostra(const char* label, bool pausaExtra) {
+  bool teste = (contador % 5 == 4);   // 1 a cada 5 vai para teste (~20%)
+
+  const uint32_t wavLen = 44 + N_SAMPLES * 2;
+  char prefixo[300];
+  int plen = snprintf(prefixo, sizeof(prefixo),
+    "--%s\r\nContent-Disposition: form-data; name=\"data\"; filename=\"%s.%lu.wav\"\r\n"
+    "Content-Type: audio/wav\r\n\r\n", BOUNDARY, label, (unsigned long)millis());
+  char sufixo[64];
+  int slen = snprintf(sufixo, sizeof(sufixo), "\r\n--%s--\r\n", BOUNDARY);
+  uint32_t contentLen = plen + wavLen + slen;
+
+  cor(140, 0, 255);                   // roxo = prepare-se (ainda NAO grava)
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(10);
+  if (!client.connect("ingestion.edgeimpulse.com", 443)) {
+    Serial.println("Falha ao conectar no Edge Impulse.");
+    return -1;
+  }
+
+  client.printf("POST /api/%s/files HTTP/1.1\r\n"
+                "Host: ingestion.edgeimpulse.com\r\n"
+                "x-api-key: %s\r\n"
+                "x-label: %s\r\n"
+                "Content-Type: multipart/form-data; boundary=%s\r\n"
+                "Content-Length: %u\r\n"
+                "Connection: close\r\n\r\n",
+                teste ? "testing" : "training", EI_API_KEY, label, BOUNDARY, (unsigned)contentLen);
+  client.write((const uint8_t*)prefixo, plen);
+  uint8_t cab[44];
+  escreverCabecalhoWav(cab);
+  client.write(cab, 44);
+
+  descartar();
+  if (pausaExtra) delay(700);
+
+  cor(255, 255, 255);                 // branco = GRAVANDO 1s, faca o som agora
+  int16_t pcm[BLOCO];
   int32_t raw[BLOCO];
+  size_t br, total = 0;
   int pico = 0;
   double soma = 0;
+  bool ok = true;
 
-  size_t total = 0;
-  while (total < N_SAMPLES) {
+  while (total < N_SAMPLES && ok) {
     i2s_read(I2S_PORT, raw, sizeof(raw), &br, portMAX_DELAY);
     size_t n = br / 4;
-    for (size_t i = 0; i < n && total < N_SAMPLES; i++) {
+    if (n > N_SAMPLES - total) n = N_SAMPLES - total;
+    for (size_t i = 0; i < n; i++) {
       int32_t v = (raw[i] >> DESLOC) * GANHO;
       if (v > 32767) v = 32767;
       if (v < -32768) v = -32768;
       int a = v < 0 ? -v : v;
       if (a > pico) pico = a;
       soma += (double)v * v;
-      pcm[total++] = (int16_t)v;
+      pcm[i] = (int16_t)v;
     }
+    if (client.write((const uint8_t*)pcm, n * 2) != n * 2) ok = false;
+    total += n;
   }
   ultimoPico = pico;
   ultimoRms = (int)sqrt(soma / N_SAMPLES);
-}
 
-int enviarAmostraEI(const char* label) {
-  bool teste = (contador % 5 == 4);   // 1 a cada 5 vai para teste (~20%)
+  if (!ok) {
+    Serial.println("Conexao caiu durante o envio.");
+    client.stop();
+    contador++;
+    return -3;
+  }
+  client.write((const uint8_t*)sufixo, slen);
 
-  String nomeArq = String(label) + "." + String(millis()) + ".wav";
-  char prefixo[300];
-  int plen = snprintf(prefixo, sizeof(prefixo),
-    "--%s\r\nContent-Disposition: form-data; name=\"data\"; filename=\"%s\"\r\n"
-    "Content-Type: audio/wav\r\n\r\n", BOUNDARY, nomeArq.c_str());
-  char sufixo[64];
-  int slen = snprintf(sufixo, sizeof(sufixo), "\r\n--%s--\r\n", BOUNDARY);
-
-  size_t wavLen = 44 + N_SAMPLES * 2;
-  memcpy(corpoHttp, prefixo, plen);
-  memcpy(corpoHttp + plen, wav, wavLen);
-  memcpy(corpoHttp + plen + wavLen, sufixo, slen);
-  size_t total = plen + wavLen + slen;
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient https;
-  String url = String("https://ingestion.edgeimpulse.com/api/") +
-               (teste ? "testing" : "training") + "/files";
-  https.begin(client, url);
-  https.addHeader("x-api-key", EI_API_KEY);
-  https.addHeader("x-label", label);
-  https.addHeader("Content-Type", String("multipart/form-data; boundary=") + BOUNDARY);
-  int code = https.POST(corpoHttp, total);
-  if (code != 200) Serial.println(https.getString());
-  https.end();
+  cor(0, 0, 255);                     // azul = aguardando resposta
+  uint32_t ini = millis();
+  while (!client.available() && client.connected() && millis() - ini < 10000) delay(10);
+  String status = client.readStringUntil('\n');
+  int code = status.startsWith("HTTP/") ? status.substring(9, 12).toInt() : -2;
+  if (code != 200) {
+    Serial.println(status);
+    while (client.available()) Serial.write(client.read());
+    Serial.println();
+  }
+  client.stop();
   contador++;
   return code;
 }
 
 void gravarParaEdgeImpulse(const char* nome, int qtd) {
-  if (!alocarBuffersCaptura()) {
-    Serial.println("Sem memoria para gravar. Tente de novo.");
-    return;
-  }
   if (!garantirWiFi(10000)) {
     Serial.println("Sem WiFi. Nao foi possivel enviar ao Edge Impulse.");
-    liberarBuffersCaptura();
     return;
   }
-  escreverCabecalhoWav();
 
   for (int i = 0; i < qtd; i++) {
-    cor(140, 0, 255);                 // roxo = prepare-se (ainda NAO grava)
-    descartar();
-    if (qtd == 1) delay(700);
-    cor(255, 255, 255);               // branco = GRAVANDO 1s, faca o som agora
-    gravar();
-    cor(0, 0, 255);                   // azul = enviando
-    int code = enviarAmostraEI(nome);
-    Serial.printf("[%d/%d] %s -> HTTP %d | pico=%d rms=%d%s\n",
+    int code = gravarEEnviarAmostra(nome, qtd == 1);
+    Serial.printf("[%d/%d] %s -> HTTP %d | pico=%d rms=%d%s | heap=%u\n",
                   i + 1, qtd, nome, code, ultimoPico, ultimoRms,
-                  ultimoPico >= 32767 ? " <- ESTOURADO" : "");
+                  ultimoPico >= 32767 ? " <- ESTOURADO" : "", ESP.getFreeHeap());
     if (code == 200) { cor(0, 255, 0); delay(150); }     // verde = ok
     else             { cor(255, 0, 80); delay(1000); }   // rosa = falhou
     cor(0, 0, 0);
   }
-  liberarBuffersCaptura();
   Serial.println("Pronto.");
 }
 
@@ -547,6 +561,7 @@ void gravarParaEdgeImpulse(const char* nome, int qtd) {
 void mostrarAjuda() {
   Serial.println("-------- COMANDOS --------");
   Serial.println("s 1 / s 0  = liga / desliga envio ao Supabase (s = mostra estado)");
+  Serial.println("w          = esquece a rede WiFi atual e abre o portal de configuracao de novo");
   Serial.println("m          = monitorar microfone (qualquer tecla para parar)");
   Serial.println("c N        = gravar N amostras de campainha para o Edge Impulse");
   Serial.println("p N        = gravar N amostras de palma para o Edge Impulse");
@@ -573,6 +588,15 @@ void processarComando(String linha) {
   }
 
   if (nome == "?" || nome == "h") { mostrarAjuda(); return; }
+
+  if (nome == "w") {
+    Serial.println("Esquecendo a rede WiFi atual. Reiniciando para abrir o portal...");
+    WiFiManager wm;
+    wm.resetSettings();
+    delay(500);
+    ESP.restart();
+    return;
+  }
 
   if (nome == "s") {
     if (arg == "1" || arg == "on") enviarSupabase = true;
@@ -602,9 +626,11 @@ void processarComando(String linha) {
     if (qtd < 1) qtd = 1;
     const char* label = (nome == "c") ? "campainha" : (nome == "p") ? "palma" : "ruido";
     aguardarAcoes();
+    xSemaphoreTake(mutexRede, portMAX_DELAY);   // pausa heartbeat/Supabase (libera RAM e evita conflito no mic)
     pausarCaptura();
     gravarParaEdgeImpulse(label, qtd);
     retomarCaptura();
+    xSemaphoreGive(mutexRede);                  // heartbeat/Supabase voltam ao normal
     return;
   }
 
@@ -621,14 +647,15 @@ void setup() {
   strip.setBrightness(80);
   cor(0, 0, 0);
 
-  cor(0, 0, 255);   // azul = conectando ao WiFi
-  Serial.print("Conectando WiFi");
-  if (garantirWiFi(20000)) {
-    Serial.println(" ok");
+  cor(0, 0, 255);   // azul = conectando/configurando WiFi
+  Serial.println("Conectando WiFi (ou abrindo portal de configuracao)...");
+  if (abrirPortalWiFi()) {
+    Serial.println("WiFi conectado.");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println(" FALHOU. Continuando sem WiFi (tentarei reconectar quando precisar).");
+    Serial.println("Sem WiFi por agora. Vou tentar de novo quando precisar enviar algo.");
+    Serial.println("Envie 'w' no serial para abrir o portal de configuracao manualmente.");
   }
   cor(0, 0, 0);
 
@@ -645,8 +672,8 @@ void setup() {
   mutexRede = xSemaphoreCreateMutex();
   filaEventos = xQueueCreate(4, sizeof(Evento));
   xTaskCreate(capture_samples, "Captura", 8192, NULL, 10, NULL);
-  xTaskCreate(tarefaAcoes, "Acoes", 16384, NULL, 1, NULL);
-  xTaskCreate(tarefaHeartbeat, "Heartbeat", 8192, NULL, 1, NULL);
+  xTaskCreate(tarefaAcoes, "Acoes", 8192, NULL, 1, NULL);
+  xTaskCreate(tarefaHeartbeat, "Heartbeat", 6144, NULL, 1, NULL);
 
   piscar(0, 255, 0, 2, 150);   // verde 2x = pronto
   mostrarAjuda();
