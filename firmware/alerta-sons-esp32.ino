@@ -31,8 +31,8 @@
 #define WIFI_PORTAL_TIMEOUT_S 180      // tempo que a rede de configuracao fica ligada
 
 // ----- Supabase -----
-const char* SUPABASE_URL = "https://<seu-projeto>.supabase.co";
-const char* SUPABASE_KEY = "<chave anon/publishable>";
+const char* SUPABASE_URL = "https://talrflwkpjkzfanwnmwd.supabase.co";
+const char* SUPABASE_KEY = "sb_publishable_ZQoMm-YfZSDjt02mHwFhpQ_QMIsXv87";
 #define ENVIAR_SUPABASE_PADRAO false   // estado inicial (troque em tempo real com o comando "s 1" / "s 0")
 #define HEARTBEAT_MS 30000             // intervalo do sinal de vida usado no status online/offline
 
