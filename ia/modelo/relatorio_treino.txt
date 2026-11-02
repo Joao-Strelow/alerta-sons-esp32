@@ -1,0 +1,33 @@
+=== VALIDAÇÃO ===
+Acurácia geral: 91.3%  (42 de 46 corretos)
+
+Matriz de confusão (linhas = real, colunas = previsto):
+            campainha      palma      ruido
+  campainha         8          1          1
+      palma         0          8          0
+      ruido         1          1         26
+
+ campainha: revocação  80.0% | precisão  88.9%
+     palma: revocação 100.0% | precisão  80.0%
+     ruido: revocação  92.9% | precisão  96.3%
+
+=== TESTE (áudios nunca vistos) ===
+Acurácia geral: 92.5%  (74 de 80 corretos)
+
+Matriz de confusão (linhas = real, colunas = previsto):
+            campainha      palma      ruido
+  campainha        15          0          1
+      palma         0         15          3
+      ruido         2          0         44
+
+ campainha: revocação  93.8% | precisão  88.2%
+     palma: revocação  83.3% | precisão 100.0%
+     ruido: revocação  95.7% | precisão  91.7%
+
+=== TESTE DE VOLUME BAIXO (ruídos do teste com volume reduzido) ===
+Percentual classificado corretamente como ruído:
+  volume  1.0x:  95.7%
+  volume  0.3x: 100.0%
+  volume  0.1x: 100.0%
+  volume 0.03x: 100.0%
+  silêncio e ruído artificial fraco: 100.0%

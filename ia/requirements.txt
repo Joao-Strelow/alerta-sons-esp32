@@ -1,0 +1,7 @@
+# Bibliotecas Python usadas no treinamento da IA
+# Instalar com:  pip install -r requirements.txt
+tensorflow      # criação, treino e conversão (TFLite) da rede neural
+numpy           # cálculos numéricos (FFT, matrizes)
+scipy           # leitura dos arquivos .wav
+matplotlib      # gráficos de treino e matriz de confusão (para o relatório)
+pyserial        # comunicação com o ESP32 pelo cabo USB (coletar_serial.py)

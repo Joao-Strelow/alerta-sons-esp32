@@ -1,0 +1,3 @@
+Acurácia no teste - modelo original (float32): 92.5%
+Acurácia no teste - modelo reduzido (int8)   : 90.0%
+Tamanho do modelo int8: 14.3 KB

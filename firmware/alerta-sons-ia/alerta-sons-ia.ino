@@ -1,11 +1,26 @@
-#define EIDSP_QUANTIZE_FILTERBANK 0   // economiza ~10K de RAM
+// ============================================================================
+// ALERTA DE SONS  -  firmware do ESP32 com IA PROPRIA
+// ============================================================================
+// O que o aparelho faz:
+//   - escuta o microfone o tempo todo e reconhece "palma" e "campainha";
+//   - pisca o LED e grava o evento na tabela "eventos" do Supabase;
+//   - manda um heartbeat a cada 30 s para a tabela "nodes" (status online);
+//   - WiFi configurado pelo portal "AlertaSons-Setup" (WiFiManager).
+//
+// O modelo de IA e o que treinamos no PC (pasta "ia/treino/" do repositorio),
+// rodando com TensorFlow Lite Micro. O calculo do espectrograma e a inferencia
+// estao em "ia_sons.h". Os arquivos "modelo_tflite.h" e "config_features.h"
+// sao GERADOS pelo ia/treino/exportar.py (nao editar a mao).
+//
+// Bibliotecas necessarias (Arduino IDE -> Gerenciar Bibliotecas):
+//   - WiFiManager (tzapu), Adafruit NeoPixel, Chirale_TensorFLowLite
+// ============================================================================
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <HTTPClient.h>
 #include <Adafruit_NeoPixel.h>
-#include <alerta-sons_inferencing.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,9 +28,7 @@
 #include "driver/i2s.h"
 #include <strings.h>
 
-#if EI_CLASSIFIER_FREQUENCY != 16000
-#error "O modelo do Edge Impulse precisa ser de 16000 Hz."
-#endif
+#include "ia_sons.h"          // IA propria: espectrograma + rede neural
 
 // ===================== CONFIGURAÇÕES =====================
 
@@ -36,11 +49,10 @@ const char* SUPABASE_KEY = "sb_publishable_ZQoMm-YfZSDjt02mHwFhpQ_QMIsXv87";
 #define ENVIAR_SUPABASE_PADRAO false   // estado inicial (troque em tempo real com o comando "s 1" / "s 0")
 #define HEARTBEAT_MS 30000             // intervalo do sinal de vida usado no status online/offline
 
-// ----- Edge Impulse (para gravar amostras) -----
-const char* EI_API_KEY = "ei_8a0a277b7f230c9d4c359136a0e114c3c5826198dfa922d7";
-
 // ----- Detecção -----
-#define CONFIANCA_MIN 0.99            // confiança mínima (0.0 a 1.0) para considerar detecção
+// Confianca minima para considerar uma deteccao. Nos testes em PC nao houve
+// falso alerta de ruido a partir de 0.90. Ajuste olhando o log ("l 1").
+#define CONFIANCA_MIN 0.95
 #define COOLDOWN      5000            // ms mínimos entre dois eventos
 
 // ----- Microfone INMP441 (I2S) -----
@@ -49,18 +61,25 @@ const char* EI_API_KEY = "ei_8a0a277b7f230c9d4c359136a0e114c3c5826198dfa922d7";
 #define I2S_SD  32
 #define I2S_PORT ((i2s_port_t)0)
 #define SAMPLE_RATE 16000
-#define N_SAMPLES   16000             // 1 segundo (gravação para o Edge Impulse)
+#define N_SAMPLES   16000             // 1 segundo (gravação de amostras para treino)
 #define BLOCO       256
 // Estes valores DEVEM ser iguais aos usados quando as amostras foram gravadas:
 #define DESLOC 16
 #define GANHO  1
 
+// ----- Janela de análise da IA -----
+// A IA analisa sempre o ULTIMO segundo de audio, e repete a analise a cada
+// 250 ms (janela deslizante). O audio recente fica num "anel" (buffer
+// circular) com 4000 amostras de folga, para a analise nunca ler um trecho
+// que o microfone ja esta sobrescrevendo.
+#define PASSO_JANELA 4000                    // 4000 amostras = 250 ms
+#define TAM_ANEL     (IA_AMOSTRAS + 4000)    // 20000 amostras (40 KB)
+#define JANELAS_POR_LOG 4                    // imprime as probabilidades a cada ~1 s
+
 // ----- LED WS2812B -----
 #define LED_PIN 4
 #define LED_COUNT 2
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
-
-#define BOUNDARY "----esp32ei7c3f9a"
 
 // ===================== ESTADO GLOBAL =====================
 
@@ -69,17 +88,6 @@ struct Evento {
   float conf;
 };
 
-typedef struct {
-  signed short *buffers[2];
-  unsigned char buf_select;
-  unsigned char buf_ready;
-  unsigned int buf_count;
-  unsigned int n_samples;
-} inference_t;
-
-static inference_t inference;
-static signed short sampleBuffer[BLOCO];
-static bool debug_nn = false;
 static bool record_status = true;
 
 volatile bool capturaAtiva = true;
@@ -91,11 +99,20 @@ QueueHandle_t filaEventos;
 bool enviarSupabase = ENVIAR_SUPABASE_PADRAO;
 bool logPredicoes = true;
 unsigned long ultimoEvento = 0;
-int aquecimento = EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW;
-int print_results = -(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW);
+int aquecimento = 1;            // 1 = ainda enchendo o primeiro segundo de audio
+int contadorLog = 0;
+
+// Buffer circular de audio (escrito pela tarefa do microfone, lido pelo loop).
+// Reservado no heap, no inicio do setup (ver setup()), e nao como variavel
+// global, porque 40 KB estouram a area de dados estaticos do ESP32.
+static int16_t* anel = nullptr;
+volatile uint32_t anelEscrita = 0;        // proxima posicao onde o microfone vai escrever
+volatile uint32_t amostrasTotal = 0;      // amostras recebidas desde o ultimo reset
+volatile uint32_t desdeUltimaJanela = 0;  // amostras desde a ultima janela pronta
+volatile uint32_t janelaFim = 0;          // posicao do anel logo apos o fim da ultima janela pronta
+volatile int janelasProntas = 0;          // janelas aguardando analise
 
 // usados só durante a gravação de amostras
-int contador = 0;
 int ultimoPico = 0;
 int ultimoRms = 0;
 
@@ -208,7 +225,8 @@ int enviarHeartbeatSupabase() {
 void tarefaHeartbeat(void* arg) {
   for (;;) {
     int code = enviarHeartbeatSupabase();
-    Serial.printf("Heartbeat -> %d\n", code);
+    Serial.printf("Heartbeat -> %d (heap livre %u, maior bloco %u)\n",
+                  code, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_MS));
   }
 }
@@ -239,7 +257,7 @@ void tarefaAcoes(void* arg) {
   }
 }
 
-// ===================== I2S / INFERÊNCIA =====================
+// ===================== I2S / MICROFONE =====================
 
 void i2sInit() {
   i2s_config_t cfg = {
@@ -266,19 +284,9 @@ void i2sInit() {
   i2s_zero_dma_buffer(I2S_PORT);
 }
 
-static void audio_inference_callback(uint32_t n_bytes) {
-  for (int i = 0; i < (int)(n_bytes >> 1); i++) {
-    inference.buffers[inference.buf_select][inference.buf_count++] = sampleBuffer[i];
-
-    if (inference.buf_count >= inference.n_samples) {
-      inference.buf_select ^= 1;
-      inference.buf_count = 0;
-      inference.buf_ready = 1;
-    }
-  }
-}
-
-// Tarefa que lê o microfone o tempo todo (pode ser pausada pelos comandos)
+// Tarefa que lê o microfone o tempo todo (pode ser pausada pelos comandos).
+// Cada amostra vai para o "anel"; a cada 4000 amostras (250 ms) avisamos o
+// loop() de que ha uma nova janela de 1 s pronta para a IA analisar.
 static void capture_samples(void* arg) {
   static int32_t raw[BLOCO];
   size_t bytes_read = 0;
@@ -300,44 +308,23 @@ static void capture_samples(void* arg) {
       int32_t v = (raw[i] >> DESLOC) * GANHO;
       if (v > 32767) v = 32767;
       if (v < -32768) v = -32768;
-      sampleBuffer[i] = (int16_t)v;
+
+      uint32_t pos = anelEscrita;
+      anel[pos] = (int16_t)v;
+      pos++;
+      if (pos >= TAM_ANEL) pos = 0;
+      anelEscrita = pos;
+      amostrasTotal = amostrasTotal + 1;
+
+      desdeUltimaJanela = desdeUltimaJanela + 1;
+      if (desdeUltimaJanela >= PASSO_JANELA) {
+        desdeUltimaJanela = 0;
+        janelaFim = pos;                     // a janela termina logo antes de "pos"
+        janelasProntas = janelasProntas + 1;
+      }
     }
-    audio_inference_callback(n * 2);
   }
   vTaskDelete(NULL);
-}
-
-static bool microphone_inference_start(uint32_t n_samples) {
-  inference.buffers[0] = (signed short *)malloc(n_samples * sizeof(signed short));
-  if (inference.buffers[0] == NULL) return false;
-
-  inference.buffers[1] = (signed short *)malloc(n_samples * sizeof(signed short));
-  if (inference.buffers[1] == NULL) {
-    free(inference.buffers[0]);
-    return false;
-  }
-
-  inference.buf_select = 0;
-  inference.buf_count = 0;
-  inference.n_samples = n_samples;
-  inference.buf_ready = 0;
-  return true;
-}
-
-static bool microphone_inference_record(void) {
-  if (inference.buf_ready == 1) {
-    Serial.println("Aviso: buffer de audio atrasado (overrun).");
-  }
-  while (inference.buf_ready == 0) {
-    delay(1);
-  }
-  inference.buf_ready = 0;
-  return true;
-}
-
-static int microphone_audio_signal_get_data(size_t offset, size_t length, float *out_ptr) {
-  numpy::int16_to_float(&inference.buffers[inference.buf_select ^ 1][offset], out_ptr, length);
-  return 0;
 }
 
 // ----- pausar / retomar a escuta para os comandos usarem o microfone -----
@@ -354,12 +341,12 @@ void pausarCaptura() {
 
 void retomarCaptura() {
   i2s_zero_dma_buffer(I2S_PORT);
-  inference.buf_select = 0;
-  inference.buf_count = 0;
-  inference.buf_ready = 0;
-  run_classifier_init();
-  aquecimento = EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW;
-  print_results = -(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW);
+  anelEscrita = 0;
+  amostrasTotal = 0;
+  desdeUltimaJanela = 0;
+  janelasProntas = 0;
+  aquecimento = 1;            // precisa encher 1 segundo de audio novo antes de detectar
+  contadorLog = 0;
   capturaAtiva = true;
 }
 
@@ -427,21 +414,11 @@ void monitorarMic() {
   Serial.println("Monitor parado.");
 }
 
-// ===================== GRAVAR AMOSTRAS PARA O EDGE IMPULSE =====================
-// O áudio vai em streaming do microfone direto para a conexão HTTPS,
-// sem guardar o WAV na RAM (o buffer de 32 KB impedia o handshake TLS).
-
-void escreverCabecalhoWav(uint8_t* h) {
-  uint32_t dataBytes = N_SAMPLES * 2;
-  uint32_t chunk = 36 + dataBytes, sub1 = 16, sr = SAMPLE_RATE, br = SAMPLE_RATE * 2;
-  uint16_t fmt = 1, ch = 1, ba = 2, bps = 16;
-  memcpy(h,      "RIFF", 4); memcpy(h + 4,  &chunk, 4);
-  memcpy(h + 8,  "WAVEfmt ", 8); memcpy(h + 16, &sub1, 4);
-  memcpy(h + 20, &fmt, 2);   memcpy(h + 22, &ch, 2);
-  memcpy(h + 24, &sr, 4);    memcpy(h + 28, &br, 4);
-  memcpy(h + 32, &ba, 2);    memcpy(h + 34, &bps, 2);
-  memcpy(h + 36, "data", 4); memcpy(h + 40, &dataBytes, 4);
-}
+// ===================== GRAVAR AMOSTRAS PARA TREINO (via cabo USB) =====================
+// Sem nuvem: o ESP32 grava 1 segundo de audio e envia pelo cabo USB para o PC,
+// onde o script "treino/coletar_serial.py" salva o arquivo .wav na pasta dados/.
+// Protocolo (o script do PC procura estas marcas):
+//     <<WAV classe tamanho_em_bytes>>\n  +  bytes do audio (int16, little-endian)  +  \n<<FIM>>\n
 
 // Descarta ~0,5s de áudio: limpa o buffer antigo e deixa o mic estabilizar
 void descartar() {
@@ -450,107 +427,47 @@ void descartar() {
   for (int i = 0; i < 32; i++) i2s_read(I2S_PORT, raw, sizeof(raw), &br, portMAX_DELAY);
 }
 
-// Abre a conexão, grava 1 segundo enviando direto e devolve o código HTTP
-int gravarEEnviarAmostra(const char* label, bool pausaExtra) {
-  bool teste = (contador % 5 == 4);   // 1 a cada 5 vai para teste (~20%)
-
-  const uint32_t wavLen = 44 + N_SAMPLES * 2;
-  char prefixo[300];
-  int plen = snprintf(prefixo, sizeof(prefixo),
-    "--%s\r\nContent-Disposition: form-data; name=\"data\"; filename=\"%s.%lu.wav\"\r\n"
-    "Content-Type: audio/wav\r\n\r\n", BOUNDARY, label, (unsigned long)millis());
-  char sufixo[64];
-  int slen = snprintf(sufixo, sizeof(sufixo), "\r\n--%s--\r\n", BOUNDARY);
-  uint32_t contentLen = plen + wavLen + slen;
-
+// Grava 1 segundo e envia pela serial. Usa o "anel" como area de gravacao
+// (a escuta esta pausada durante os comandos, entao ele esta livre).
+void gravarAmostraSerial(const char* label, bool pausaExtra) {
   cor(140, 0, 255);                   // roxo = prepare-se (ainda NAO grava)
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(10);
-  if (!client.connect("ingestion.edgeimpulse.com", 443)) {
-    Serial.println("Falha ao conectar no Edge Impulse.");
-    return -1;
-  }
-
-  client.printf("POST /api/%s/files HTTP/1.1\r\n"
-                "Host: ingestion.edgeimpulse.com\r\n"
-                "x-api-key: %s\r\n"
-                "x-label: %s\r\n"
-                "Content-Type: multipart/form-data; boundary=%s\r\n"
-                "Content-Length: %u\r\n"
-                "Connection: close\r\n\r\n",
-                teste ? "testing" : "training", EI_API_KEY, label, BOUNDARY, (unsigned)contentLen);
-  client.write((const uint8_t*)prefixo, plen);
-  uint8_t cab[44];
-  escreverCabecalhoWav(cab);
-  client.write(cab, 44);
-
   descartar();
   if (pausaExtra) delay(700);
 
   cor(255, 255, 255);                 // branco = GRAVANDO 1s, faca o som agora
-  int16_t pcm[BLOCO];
   int32_t raw[BLOCO];
   size_t br, total = 0;
   int pico = 0;
   double soma = 0;
-  bool ok = true;
-
-  while (total < N_SAMPLES && ok) {
+  while (total < N_SAMPLES) {
     i2s_read(I2S_PORT, raw, sizeof(raw), &br, portMAX_DELAY);
     size_t n = br / 4;
-    if (n > N_SAMPLES - total) n = N_SAMPLES - total;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < n && total < N_SAMPLES; i++) {
       int32_t v = (raw[i] >> DESLOC) * GANHO;
       if (v > 32767) v = 32767;
       if (v < -32768) v = -32768;
       int a = v < 0 ? -v : v;
       if (a > pico) pico = a;
       soma += (double)v * v;
-      pcm[i] = (int16_t)v;
+      anel[total++] = (int16_t)v;
     }
-    if (client.write((const uint8_t*)pcm, n * 2) != n * 2) ok = false;
-    total += n;
   }
   ultimoPico = pico;
   ultimoRms = (int)sqrt(soma / N_SAMPLES);
 
-  if (!ok) {
-    Serial.println("Conexao caiu durante o envio.");
-    client.stop();
-    contador++;
-    return -3;
-  }
-  client.write((const uint8_t*)sufixo, slen);
-
-  cor(0, 0, 255);                     // azul = aguardando resposta
-  uint32_t ini = millis();
-  while (!client.available() && client.connected() && millis() - ini < 10000) delay(10);
-  String status = client.readStringUntil('\n');
-  int code = status.startsWith("HTTP/") ? status.substring(9, 12).toInt() : -2;
-  if (code != 200) {
-    Serial.println(status);
-    while (client.available()) Serial.write(client.read());
-    Serial.println();
-  }
-  client.stop();
-  contador++;
-  return code;
+  cor(0, 0, 255);                     // azul = enviando ao PC
+  Serial.printf("<<WAV %s %u>>\n", label, (unsigned)(N_SAMPLES * 2));
+  Serial.write((const uint8_t*)anel, N_SAMPLES * 2);
+  Serial.print("\n<<FIM>>\n");
+  Serial.flush();
 }
 
-void gravarParaEdgeImpulse(const char* nome, int qtd) {
-  if (!garantirWiFi(10000)) {
-    Serial.println("Sem WiFi. Nao foi possivel enviar ao Edge Impulse.");
-    return;
-  }
-
+void gravarParaTreino(const char* nome, int qtd) {
   for (int i = 0; i < qtd; i++) {
-    int code = gravarEEnviarAmostra(nome, qtd == 1);
-    Serial.printf("[%d/%d] %s -> HTTP %d | pico=%d rms=%d%s | heap=%u\n",
-                  i + 1, qtd, nome, code, ultimoPico, ultimoRms,
-                  ultimoPico >= 32767 ? " <- ESTOURADO" : "", ESP.getFreeHeap());
-    if (code == 200) { cor(0, 255, 0); delay(150); }     // verde = ok
-    else             { cor(255, 0, 80); delay(1000); }   // rosa = falhou
+    gravarAmostraSerial(nome, qtd == 1);
+    Serial.printf("[%d/%d] %s | pico=%d rms=%d%s\n", i + 1, qtd, nome, ultimoPico, ultimoRms,
+                  ultimoPico >= 32767 ? " <- ESTOURADO" : "");
+    cor(0, 255, 0); delay(150);       // verde = ok
     cor(0, 0, 0);
   }
   Serial.println("Pronto.");
@@ -563,9 +480,10 @@ void mostrarAjuda() {
   Serial.println("s 1 / s 0  = liga / desliga envio ao Supabase (s = mostra estado)");
   Serial.println("w          = esquece a rede WiFi atual e abre o portal de configuracao de novo");
   Serial.println("m          = monitorar microfone (qualquer tecla para parar)");
-  Serial.println("c N        = gravar N amostras de campainha para o Edge Impulse");
-  Serial.println("p N        = gravar N amostras de palma para o Edge Impulse");
-  Serial.println("r N        = gravar N amostras de ruido para o Edge Impulse");
+  Serial.println("c N        = gravar N amostras de campainha (enviadas ao PC pelo USB)");
+  Serial.println("p N        = gravar N amostras de palma (enviadas ao PC pelo USB)");
+  Serial.println("r N        = gravar N amostras de ruido (enviadas ao PC pelo USB)");
+  Serial.println("            (use o script treino/coletar_serial.py para salvar no PC)");
   Serial.println("l 1 / l 0  = liga / desliga log das probabilidades");
   Serial.println("?          = mostra esta ajuda");
   Serial.println("--------------------------");
@@ -626,9 +544,9 @@ void processarComando(String linha) {
     if (qtd < 1) qtd = 1;
     const char* label = (nome == "c") ? "campainha" : (nome == "p") ? "palma" : "ruido";
     aguardarAcoes();
-    xSemaphoreTake(mutexRede, portMAX_DELAY);   // pausa heartbeat/Supabase (libera RAM e evita conflito no mic)
+    xSemaphoreTake(mutexRede, portMAX_DELAY);   // pausa heartbeat/Supabase (evita mensagens no meio do envio)
     pausarCaptura();
-    gravarParaEdgeImpulse(label, qtd);
+    gravarParaTreino(label, qtd);
     retomarCaptura();
     xSemaphoreGive(mutexRede);                  // heartbeat/Supabase voltam ao normal
     return;
@@ -647,6 +565,22 @@ void setup() {
   strip.setBrightness(80);
   cor(0, 0, 0);
 
+  // Reserva a memoria grande ANTES de ligar o WiFi (evita fragmentacao do heap,
+  // que prejudicaria as conexoes HTTPS depois).
+  anel = (int16_t*)heap_caps_malloc(TAM_ANEL * sizeof(int16_t), MALLOC_CAP_8BIT);
+  if (anel == nullptr) {
+    Serial.println("ERRO: sem memoria para o buffer de audio.");
+    for (;;) { piscar(255, 0, 80, 1, 300); }
+  }
+  memset(anel, 0, TAM_ANEL * sizeof(int16_t));
+
+  if (!ia_iniciar()) {
+    Serial.println("ERRO: nao foi possivel iniciar a IA.");
+    for (;;) { piscar(255, 0, 80, 1, 300); }
+  }
+  Serial.printf("IA propria: %d classes | modelo %u bytes | arena usada %u de %u bytes\n",
+                IA_N_CLASSES, modelo_tflite_len, (unsigned)ia_arena_usada(), (unsigned)IA_TAMANHO_ARENA);
+
   cor(0, 0, 255);   // azul = conectando/configurando WiFi
   Serial.println("Conectando WiFi (ou abrindo portal de configuracao)...");
   if (abrirPortalWiFi()) {
@@ -658,15 +592,6 @@ void setup() {
     Serial.println("Envie 'w' no serial para abrir o portal de configuracao manualmente.");
   }
   cor(0, 0, 0);
-
-  Serial.printf("Modelo: janela %d ms, %d classes\n",
-                EI_CLASSIFIER_RAW_SAMPLE_COUNT / 16, EI_CLASSIFIER_LABEL_COUNT);
-
-  run_classifier_init();
-  if (!microphone_inference_start(EI_CLASSIFIER_SLICE_SIZE)) {
-    Serial.println("ERRO: sem memoria para o buffer de audio.");
-    for (;;) { piscar(255, 0, 80, 1, 300); }
-  }
 
   i2sInit();
   mutexRede = xSemaphoreCreateMutex();
@@ -683,39 +608,45 @@ void setup() {
 void loop() {
   if (Serial.available()) processarComando(Serial.readStringUntil('\n'));
 
-  microphone_inference_record();
+  // espera o microfone completar mais 250 ms de audio
+  while (janelasProntas == 0) delay(1);
+  if (janelasProntas > 1) {
+    Serial.println("Aviso: analise atrasada (overrun).");
+  }
+  uint32_t fim = janelaFim;
+  janelasProntas = 0;
 
-  signal_t signal;
-  signal.total_length = EI_CLASSIFIER_SLICE_SIZE;
-  signal.get_data = &microphone_audio_signal_get_data;
-  ei_impulse_result_t result = {0};
+  // so detecta depois de ter 1 segundo inteiro de audio novo
+  aquecimento = (amostrasTotal < (uint32_t)IA_AMOSTRAS) ? 1 : 0;
 
-  EI_IMPULSE_ERROR r = run_classifier_continuous(&signal, &result, debug_nn);
-  if (r != EI_IMPULSE_OK) {
-    Serial.printf("ERRO ao classificar (%d)\n", r);
+  // 1) espectrograma do ultimo segundo  2) rede neural  -> probabilidades
+  int inicio = (int)((fim + TAM_ANEL - IA_AMOSTRAS) % TAM_ANEL);
+  ia_preencher_entrada(anel, TAM_ANEL, inicio);
+
+  float probs[IA_N_CLASSES];
+  if (!ia_classificar(probs)) {
+    Serial.println("ERRO ao classificar.");
     return;
   }
-
-  if (aquecimento > 0) aquecimento--;
 
   // classe com maior probabilidade nesta janela
   float melhorValor = 0;
   const char* melhorLabel = "";
-  for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
-    if (result.classification[ix].value > melhorValor) {
-      melhorValor = result.classification[ix].value;
-      melhorLabel = result.classification[ix].label;
+  for (int ix = 0; ix < IA_N_CLASSES; ix++) {
+    if (probs[ix] > melhorValor) {
+      melhorValor = probs[ix];
+      melhorLabel = IA_CLASSES[ix];
     }
   }
   tratarDeteccao(melhorLabel, melhorValor);
 
-  if (++print_results >= (EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW)) {
+  if (aquecimento == 0 && ++contadorLog >= JANELAS_POR_LOG) {
     if (logPredicoes) {
-      for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
-        Serial.printf("%s=%.2f  ", result.classification[ix].label, result.classification[ix].value);
+      for (int ix = 0; ix < IA_N_CLASSES; ix++) {
+        Serial.printf("%s=%.2f  ", IA_CLASSES[ix], probs[ix]);
       }
       Serial.println();
     }
-    print_results = 0;
+    contadorLog = 0;
   }
 }
