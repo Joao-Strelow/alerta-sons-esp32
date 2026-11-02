@@ -90,24 +90,13 @@ python -m venv .venv
 
 ## Adicionar um novo tipo de som (ex.: sirene)
 
-O tamanho do modelo quase não muda: cada classe nova acrescenta só ~768 pesos na última
-camada. O modelo continua com poucos KB e cabe com folga no ESP32.
+O passo a passo completo e correto (firmware, treino, site e Telegram) está na seção 12 do
+[manual completo](../docs/MANUAL.md#12-adicionar-um-novo-tipo-de-som-exsirene). Atenção: além de
+editar 	reino/config.py, é preciso ensinar o firmware e o script coletar_serial.py a gravar a
+classe nova, senão a coleta não funciona.
 
-1. **Gravar** (Serial Monitor fechado), de 40 a 50 gravações em locais e distâncias diferentes:
-   `python treino\coletar_serial.py COM3 sirene 40`
-2. **Declarar a classe** em `treino/config.py`: acrescente `"sirene"` na lista `CLASSES`
-   (mantenha `"ruido"` na lista; o código usa o nome para tratar o ruído).
-3. **Treinar e exportar:** `python treino\treinar.py` e depois `python treino\exportar.py`.
-   Veja `modelo/matriz_confusao.png` para saber quais sons a IA confunde. Se confundir muito,
-   grave mais exemplos ou aumente as camadas da rede em `treinar.py`.
-4. **Copiar** `modelo/modelo_tflite.h` e `modelo/config_features.h` para `../firmware/alerta-sons-ia/`.
-5. **Ajustar o firmware** (`alerta-sons-ia.ino`): onde `palma` e `campainha` são tratadas
-   (cor do LED e texto do evento enviado), inclua a nova classe.
-6. **Ajustar o site e o Telegram:** `app/app.vue` (ícone e texto do alerta) e
-   `supabase/functions/notificar-telegram/index.ts` (texto da mensagem).
-   No Supabase nada muda: a coluna `tipo` da tabela `eventos` aceita qualquer texto.
-7. **Regravar** o firmware no ESP32 e testar com `l 1` no Serial Monitor.
 ## Resultado atual
 
 Teste com áudios nunca vistos: 92,5% de acerto (modelo float) e 90,0% (int8, o que roda no ESP32).
+
 

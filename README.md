@@ -1,4 +1,4 @@
-# Alerta de Sons ESP32
+﻿# Alerta de Sons ESP32
 
 Dispositivo de acessibilidade para pessoas com deficiência auditiva. Um ESP32 com
 microfone escuta o ambiente, reconhece **palma** e **campainha** com uma rede neural
@@ -7,6 +7,9 @@ pessoa por LED, por um app web em tempo real e por mensagem no Telegram.
 
 O aparelho é móvel: pensado para ser levado no bolso, usando o hotspot do celular da
 pessoa e um powerbank.
+
+> **Primeira vez aqui?** Siga o [**manual completo**](docs/MANUAL.md): montagem, Supabase,
+> site, Telegram, treino da IA e como adicionar novos sons, tudo em um arquivo.
 
 ## Como o sistema funciona
 
@@ -131,3 +134,4 @@ Comandos no Serial Monitor (115200): `s 1` liga o envio ao Supabase (começa des
 Grave mais sons reais (sala quieta, TV, o aparelho no bolso) com `ia/treino/coletar_serial.py`,
 retreine e copie os dois arquivos `.h` gerados para a pasta do firmware. O passo a passo
 está em [ia/README.md](ia/README.md).
+
