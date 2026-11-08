@@ -7,6 +7,13 @@ no final, ensinar novos sons (como sirene) ao aparelho.
 Não é preciso saber programar para seguir os passos, só copiar e colar os comandos.
 Cada etapa tem uma caixa **Conexões** dizendo o que precisa estar ligado a quê.
 
+> **Atalho:** dê dois cliques em `setup.bat` (na raiz do projeto). O assistente pede a URL e a
+> chave do Supabase, testa a conexão, cria o `.env` do site e o `secrets.h` do aparelho e instala
+> as dependências. As Etapas 2 e 3 abaixo mostram o mesmo passo a passo feito à mão.
+>
+> **Organização das pastas:** `1-banco/` (Supabase), `2-site/` (app web), `3-aparelho/` (ESP32) e
+> `4-ia/` (treino da IA, opcional). O número é a ordem de instalação.
+
 ## Índice
 
 1. [O que é o projeto](#1-o-que-é-o-projeto)
@@ -111,18 +118,18 @@ flowchart TD
         MIC1[Microfone INMP441] --> GRAV["Comando c / p / r N<br/>grava 1 s de áudio"]
     end
     GRAV -- "cabo USB (serial)" --> COL[coletar_serial.py<br/>salva arquivos .wav]
-    COL -- "80% das gravações" --> TR[(ia/dados/training)]
-    COL -- "20% das gravações" --> TE[(ia/dados/testing)]
+    COL -- "80% das gravações" --> TR[(4-ia/dados/training)]
+    COL -- "20% das gravações" --> TE[(4-ia/dados/testing)]
     TR --> TREINAR
     TE --> TREINAR
-    subgraph PC[Treino no computador - pasta ia/treino/]
+    subgraph PC[Treino no computador - pasta 4-ia/treino/]
         TREINAR["treinar.py<br/>1. aumenta e balanceia os dados<br/>2. espectrograma mel (features.py)<br/>3. treina a CNN<br/>4. avalia no conjunto de teste"]
         TREINAR --> MOD[(modelo/<br/>modelo_keras.keras<br/>gráficos e relatório)]
         MOD --> EXP["exportar.py<br/>quantiza para int8 (~14 KB)<br/>gera arquivos .h"]
         EXP --> H["modelo_tflite.h<br/>config_features.h"]
         H --> VER["verificar_firmware.py<br/>confere: cálculo do ESP32 = cálculo do treino"]
     end
-    H -- "copiados para firmware/alerta-sons-ia/" --> IDE[Arduino IDE<br/>compila e grava]
+    H -- "copiados para 3-aparelho/alerta-sons-ia/" --> IDE[Arduino IDE<br/>compila e grava]
     IDE --> ESP2[ESP32 com a IA nova]
 ```
 
@@ -233,7 +240,7 @@ O Supabase guarda os eventos e avisa o site em tempo real.
 ### 5.2 Criar as tabelas
 
 1. No menu lateral, abra **SQL Editor** e clique em **New query**.
-2. Abra o arquivo `supabase/schema.sql` deste repositório, copie **todo** o conteúdo e cole
+2. Abra o arquivo `1-banco/schema.sql` deste repositório, copie **todo** o conteúdo e cole
    no editor.
 3. Clique em **Run**. Deve aparecer "Success".
 
@@ -264,13 +271,14 @@ Guarde os dois. Eles serão usados no site (Etapa 2) e no ESP32 (Etapa 3).
 > **Conexões:** computador com internet. O site conversa só com o Supabase. O ESP32 não
 > precisa estar ligado para o site abrir.
 
-1. Na pasta do projeto, copie o arquivo de exemplo:
+1. Entre na pasta do site e copie o arquivo de exemplo:
 
    ```bash
+   cd 2-site
    copy .env.example .env
    ```
 
-2. Abra o `.env` e preencha com os valores copiados na Etapa 1:
+2. Abra o `2-site/.env` e preencha com os valores copiados na Etapa 1:
 
    ```bash
    NUXT_PUBLIC_SUPABASE_URL=https://<seu-projeto>.supabase.co
@@ -309,15 +317,18 @@ Para parar o site, aperte `Ctrl + C` no terminal. Sempre que quiser usar, rode
 
 ### 7.2 Abrir e configurar
 
-1. Abra `firmware/alerta-sons-ia/alerta-sons-ia.ino` (os outros arquivos da pasta abrem
+1. Abra `3-aparelho/alerta-sons-ia/alerta-sons-ia.ino` (os outros arquivos da pasta abrem
    como abas).
-2. No topo do arquivo, preencha:
+2. Copie `secrets.h.example` (mesma pasta) para `secrets.h` e preencha nele (o setup.bat faz isso por você):
 
    | Variável | Valor |
    |---|---|
    | `SUPABASE_URL` | O Project URL da Etapa 1 |
    | `SUPABASE_KEY` | A chave anon/publishable da Etapa 1 |
    | `NODE_ID` | Um nome para este aparelho, ex.: `"no1"` (use outro nome em cada aparelho) |
+   | `ENVIAR_SUPABASE_PADRAO` | `true` = já começa enviando; `false` = começa desligado (liga com `s 1`) |
+
+   O `secrets.h` não vai para o GitHub (está no `.gitignore`).
 
 3. Em **Ferramentas**, escolha:
    - **Placa:** `ESP32 Dev Module`
@@ -412,7 +423,7 @@ flowchart LR
 
 1. No painel do Supabase, abra **Edge Functions** e crie uma função chamada
    **`notificar-telegram`**.
-2. Cole o conteúdo de `supabase/functions/notificar-telegram/index.ts` e publique (Deploy).
+2. Cole o conteúdo de `1-banco/telegram/notificar-telegram.ts` e publique (Deploy).
 3. Em **Edge Functions -> Secrets**, adicione `TELEGRAM_BOT_TOKEN` com o token do passo 8.1.
    (`SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` já existem sozinhos.)
 
@@ -552,7 +563,7 @@ máxima é de 1 unidade na escala int8.
 
 ### 10.4 Mapa dos arquivos de treino
 
-| Arquivo (`ia/treino/`) | Função |
+| Arquivo (`4-ia/treino/`) | Função |
 |---|---|
 | `config.py` | Todos os parâmetros num só lugar (classes, tamanho do áudio, épocas...) |
 | `features.py` | Áudio -> espectrograma mel |
@@ -560,12 +571,14 @@ máxima é de 1 unidade na escala int8.
 | `treinar.py` | Cria, treina e avalia a rede; gera gráficos e relatório |
 | `exportar.py` | Quantiza para int8 e gera os `.h` |
 | `verificar_firmware.py` | Confere se o ESP32 calcula igual ao treino |
-| `coletar_serial.py` | Grava novos sons pelo ESP32 e salva em `ia/dados/` |
+| `coletar_serial.py` | Grava novos sons pelo ESP32 e salva em `4-ia/dados/` |
 
-Os resultados ficam em `ia/modelo/`: `relatorio_treino.txt`, `grafico_treino.png`,
+Os resultados ficam em `4-ia/modelo/`: `relatorio_treino.txt`, `grafico_treino.png`,
 `matriz_confusao.png`, `modelo_alerta.tflite` e os arquivos `.h`.
 
 ## 11. Retreinar com mais dados
+
+> Guia completo e detalhado, com a explicação de cada parâmetro: [4-ia/GUIA-IA.md](../4-ia/GUIA-IA.md).
 
 Quanto mais variados os exemplos reais, melhor o resultado. Vale gravar: sala quieta, TV ou
 ventilador ligados, rua, e o aparelho dentro do bolso ou da bolsa.
@@ -575,7 +588,7 @@ ventilador ligados, rua, e o aparelho dentro do bolso ou da bolsa.
 
 ### 11.1 Preparar o Python (uma vez só)
 
-Dentro da pasta `ia` (PowerShell):
+Dentro da pasta `4-ia` (PowerShell):
 
 ```powershell
 python -m venv .venv
@@ -594,7 +607,7 @@ Descubra a porta COM do ESP32 (no Arduino IDE, em Ferramentas -> Porta). Exemplo
 
 O número é a quantidade de gravações de 1 segundo. Faça o som (ou deixe o ambiente com o
 barulho de fundo desejado, no caso do ruído) durante toda a coleta. Os arquivos vão
-para `ia/dados/training` (80%) e `ia/dados/testing` (20%).
+para `4-ia/dados/training` (80%) e `4-ia/dados/testing` (20%).
 
 ### 11.3 Treinar e exportar
 
@@ -609,12 +622,14 @@ subiu (ou se manteve com mais variedade), siga em frente.
 
 ### 11.4 Colocar no ESP32
 
-1. Copie `ia/modelo/modelo_tflite.h` e `ia/modelo/config_features.h` para
-   `firmware/alerta-sons-ia/` (substituindo os existentes).
+1. O `exportar.py` já copia `modelo_tflite.h` e `config_features.h` para
+   `3-aparelho/alerta-sons-ia/` sozinho (se precisar fazer à mão, copie de `4-ia/modelo/`).
 2. Abra o `.ino` no Arduino IDE e grave de novo (Etapa 3).
 3. Teste com `l 1` no Serial Monitor.
 
 ## 12. Adicionar um novo tipo de som (ex.: sirene)
+
+> Versão com checklist e explicação do porquê de cada passo: [4-ia/GUIA-IA.md](../4-ia/GUIA-IA.md#6-adicionar-um-novo-som-checklist).
 
 Adicionar uma classe quase não pesa no ESP32: cada classe nova acrescenta só ~768 pesos na
 última camada. O modelo continua com poucos KB.
@@ -630,7 +645,7 @@ Vamos usar `sirene` como exemplo e a letra `i` como comando de gravação no ESP
 
 ### 12.1 Ensinar o ESP32 a gravar a nova classe
 
-Em `firmware/alerta-sons-ia/alerta-sons-ia.ino`, procure o trecho dos comandos de gravação
+Em `3-aparelho/alerta-sons-ia/alerta-sons-ia.ino`, procure o trecho dos comandos de gravação
 (`if (nome == "c" || nome == "p" || nome == "r")`) e acrescente a letra `i`:
 
 ```cpp
@@ -644,7 +659,7 @@ Na função `mostrarAjuda()`, acrescente a linha de ajuda `i N = gravar N amostr
 
 ### 12.2 Ensinar o script de coleta
 
-Em `ia/treino/coletar_serial.py`, no dicionário de letras, acrescente a sirene:
+Em `4-ia/treino/coletar_serial.py`, no dicionário de letras, acrescente a sirene:
 
 ```python
 letra = {"campainha": "c", "palma": "p", "ruido": "r", "sirene": "i"}[classe]
@@ -652,7 +667,7 @@ letra = {"campainha": "c", "palma": "p", "ruido": "r", "sirene": "i"}[classe]
 
 ### 12.3 Declarar a classe no treino
 
-Em `ia/treino/config.py`:
+Em `4-ia/treino/config.py`:
 
 ```python
 CLASSES = ["campainha", "palma", "sirene", "ruido"]
@@ -684,7 +699,7 @@ de cada. Se mesmo assim não melhorar, dá para aumentar o número de filtros da
 
 ### 12.5 Fazer o ESP32 reagir à nova classe
 
-Copie `modelo_tflite.h` e `config_features.h` para `firmware/alerta-sons-ia/`. No `.ino`:
+O `exportar.py` já copiou `modelo_tflite.h` e `config_features.h` para `3-aparelho/alerta-sons-ia/`. No `.ino`:
 
 **a)** Em `tratarDeteccao`, aceite o novo tipo:
 
@@ -716,7 +731,7 @@ Regrave o ESP32.
   .flash.sirene { background: #7c3aed; color: #fff; }
   ```
 
-**Telegram** (`supabase/functions/notificar-telegram/index.ts`): em `TEXTOS`, acrescente
+**Telegram** (`1-banco/telegram/notificar-telegram.ts`): em `TEXTOS`, acrescente
 `sirene: '🚨 Sirene detectada',` e publique a função de novo (cole o arquivo no editor de
 Edge Functions do Supabase e clique em Deploy).
 

@@ -7,10 +7,10 @@
 //   - manda um heartbeat a cada 30 s para a tabela "nodes" (status online);
 //   - WiFi configurado pelo portal "AlertaSons-Setup" (WiFiManager).
 //
-// O modelo de IA e o que treinamos no PC (pasta "ia/treino/" do repositorio),
+// O modelo de IA e o que treinamos no PC (pasta "4-ia/treino/" do repositorio),
 // rodando com TensorFlow Lite Micro. O calculo do espectrograma e a inferencia
 // estao em "ia_sons.h". Os arquivos "modelo_tflite.h" e "config_features.h"
-// sao GERADOS pelo ia/treino/exportar.py (nao editar a mao).
+// sao GERADOS pelo 4-ia/treino/exportar.py (nao editar a mao).
 //
 // Bibliotecas necessarias (Arduino IDE -> Gerenciar Bibliotecas):
 //   - WiFiManager (tzapu), Adafruit NeoPixel, Chirale_TensorFLowLite
@@ -32,8 +32,15 @@
 
 // ===================== CONFIGURAÇÕES =====================
 
-// ----- Nó -----
-#define NODE_ID "no1"                 // "no2" no segundo ESP32
+// ----- Segredos e identificacao (arquivo secrets.h) -----
+// NODE_ID, SUPABASE_URL, SUPABASE_KEY e ENVIAR_SUPABASE_PADRAO ficam em
+// "secrets.h", que NAO vai para o GitHub. Crie-o pelo app de setup
+// (setup.bat, na raiz do projeto) ou copiando "secrets.h.example".
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#error "Falta o arquivo secrets.h nesta pasta. Rode o setup.bat ou copie secrets.h.example para secrets.h e preencha."
+#endif
 
 // ----- WiFi -----
 // Nao ha mais SSID/senha fixos no codigo: na primeira vez (ou apos "w" no
@@ -44,9 +51,8 @@
 #define WIFI_PORTAL_TIMEOUT_S 180      // tempo que a rede de configuracao fica ligada
 
 // ----- Supabase -----
-const char* SUPABASE_URL = "https://talrflwkpjkzfanwnmwd.supabase.co";
-const char* SUPABASE_KEY = "sb_publishable_ZQoMm-YfZSDjt02mHwFhpQ_QMIsXv87";
-#define ENVIAR_SUPABASE_PADRAO false   // estado inicial (troque em tempo real com o comando "s 1" / "s 0")
+// SUPABASE_URL, SUPABASE_KEY e ENVIAR_SUPABASE_PADRAO vem do secrets.h.
+// (ENVIAR_SUPABASE_PADRAO e o estado inicial; troque em tempo real com "s 1" / "s 0")
 #define HEARTBEAT_MS 30000             // intervalo do sinal de vida usado no status online/offline
 
 // ----- Detecção -----

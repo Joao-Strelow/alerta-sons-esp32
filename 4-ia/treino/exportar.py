@@ -26,6 +26,7 @@ Um modelo treinado no computador usa números decimais de 32 bits ("float32") e
 
 import json
 import os
+import shutil
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -189,6 +190,15 @@ def main():
     (pasta / "relatorio_exportacao.txt").write_text(resumo, encoding="utf-8")
     print("\n" + resumo)
     print(f"Arquivos gerados em: {pasta}")
+
+    # 4) Copia os dois .h para o firmware (antes era um passo manual)
+    if config.PASTA_FIRMWARE.is_dir():
+        for nome in ("modelo_tflite.h", "config_features.h"):
+            shutil.copy2(pasta / nome, config.PASTA_FIRMWARE / nome)
+        print(f"Copiados para o firmware: {config.PASTA_FIRMWARE}")
+        print("Agora abra o .ino na Arduino IDE e grave de novo no ESP32.")
+    else:
+        print("Pasta do firmware não encontrada: copie os .h manualmente.")
 
 
 if __name__ == "__main__":

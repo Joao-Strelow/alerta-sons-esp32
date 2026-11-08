@@ -27,3 +27,6 @@ logs
 .venv
 __pycache__
 *.npz
+
+# Segredos do aparelho (ESP32)
+secrets.h
