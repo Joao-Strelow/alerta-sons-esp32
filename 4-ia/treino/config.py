@@ -23,6 +23,8 @@ RAIZ = Path(__file__).resolve().parent.parent
 PASTA_TREINO = RAIZ / "dados" / "training"   # áudios usados para o modelo APRENDER
 PASTA_TESTE = RAIZ / "dados" / "testing"     # áudios nunca vistos, só para AVALIAR
 PASTA_MODELO = RAIZ / "modelo"               # onde ficam os resultados (modelo, gráficos)
+# Pasta do firmware do ESP32: o exportar.py copia para lá os dois arquivos .h gerados.
+PASTA_FIRMWARE = RAIZ.parent / "3-aparelho" / "alerta-sons-ia"
 
 # ---------------------------------------------------------------------------
 # CLASSES (o que a IA precisa distinguir)

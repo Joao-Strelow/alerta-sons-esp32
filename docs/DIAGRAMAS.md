@@ -11,18 +11,18 @@ flowchart TD
         MIC1[Microfone INMP441] --> GRAV["Comando c / p / r N<br/>grava 1 s de áudio"]
     end
     GRAV -- "cabo USB (serial)" --> COL[coletar_serial.py<br/>salva arquivos .wav]
-    COL -- "80% das gravações" --> TR[(ia/dados/training)]
-    COL -- "20% das gravações" --> TE[(ia/dados/testing)]
+    COL -- "80% das gravações" --> TR[(4-ia/dados/training)]
+    COL -- "20% das gravações" --> TE[(4-ia/dados/testing)]
     TR --> TREINAR
     TE --> TREINAR
-    subgraph PC[Treino no computador - pasta ia/treino/]
+    subgraph PC[Treino no computador - pasta 4-ia/treino/]
         TREINAR["treinar.py<br/>1. aumenta e balanceia os dados<br/>2. espectrograma mel (features.py)<br/>3. treina a CNN<br/>4. avalia no conjunto de teste"]
         TREINAR --> MOD[(modelo/<br/>modelo_keras.keras<br/>gráficos e relatório)]
         MOD --> EXP["exportar.py<br/>quantiza para int8 (~14 KB)<br/>gera arquivos .h"]
         EXP --> H["modelo_tflite.h<br/>config_features.h"]
         H --> VER["verificar_firmware.py<br/>confere: cálculo do ESP32 = cálculo do treino"]
     end
-    H -- "copiados para firmware/alerta-sons-ia/" --> IDE[Arduino IDE<br/>compila e grava]
+    H -- "copiados para 3-aparelho/alerta-sons-ia/" --> IDE[Arduino IDE<br/>compila e grava]
     IDE --> ESP2[ESP32 com a IA nova]
 ```
 
