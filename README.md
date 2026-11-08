@@ -1,15 +1,43 @@
 ﻿# Alerta de Sons ESP32
 
-Dispositivo de acessibilidade para pessoas com deficiência auditiva. Um ESP32 com
-microfone escuta o ambiente, reconhece **palma** e **campainha** com uma rede neural
-treinada por nós (rodando no próprio aparelho, sem internet para reconhecer) e avisa a
-pessoa por LED, por um app web em tempo real e por mensagem no Telegram.
+Dispositivo de acessibilidade para pessoas com deficiência auditiva. Um ESP32 com microfone
+escuta o ambiente, reconhece **palma** e **campainha** com uma rede neural treinada por nós
+(rodando no próprio aparelho, sem internet para reconhecer) e avisa a pessoa por **LED**, por um
+**app web** em tempo real e por **mensagem no Telegram**.
 
-O aparelho é móvel: pensado para ser levado no bolso, usando o hotspot do celular da
-pessoa e um powerbank.
+O aparelho é móvel: pensado para ir no bolso, usando o hotspot do celular e um powerbank.
 
-> **Primeira vez aqui?** Siga o [**manual completo**](docs/MANUAL.md): montagem, Supabase,
-> site, Telegram, treino da IA e como adicionar novos sons, tudo em um arquivo.
+## Por onde começar
+
+**Dê dois cliques em [`setup.bat`](setup.bat).** O assistente confere o que falta instalar, pede
+os dados do Supabase, testa a conexão e cria os arquivos de configuração do site e do aparelho.
+(Sem Windows: `node setup.mjs`.)
+
+Depois, em ordem:
+
+| # | Pasta | O que é | Obrigatório? | Leia |
+|---|---|---|---|---|
+| 1 | [`1-banco/`](1-banco/) | Banco de dados na nuvem (Supabase) e alerta do Telegram | Sim | [1-banco/README.md](1-banco/README.md) |
+| 2 | [`2-site/`](2-site/) | App web (Nuxt): alerta em tela, histórico, status | Sim | [2-site/README.md](2-site/README.md) |
+| 3 | [`3-aparelho/`](3-aparelho/) | Firmware do ESP32 (Arduino) | Sim | [3-aparelho/README.md](3-aparelho/README.md) |
+| 4 | [`4-ia/`](4-ia/) | Treino da rede neural (Python). **O modelo já vem treinado** | Só para retreinar ou adicionar sons | [4-ia/GUIA-IA.md](4-ia/GUIA-IA.md) |
+| — | [`docs/`](docs/) | Manual completo, diagramas e ligação das peças | Consulta | [docs/MANUAL.md](docs/MANUAL.md) |
+
+> Só quer instalar e usar? Basta o **setup.bat** e as pastas **1, 2 e 3**. A pasta 4 pode ser ignorada.
+
+## O que precisa ser configurado
+
+Só **três valores**, e o `setup.bat` coloca cada um no lugar certo:
+
+| Valor | Onde conseguir | Onde é usado |
+|---|---|---|
+| URL do projeto Supabase | Painel → Project Settings → Data API | `2-site/.env` e `3-aparelho/alerta-sons-ia/secrets.h` |
+| Chave anon / publishable | Painel → Project Settings → Data API | os mesmos dois arquivos |
+| Nome do aparelho (`no1`, `no2`...) | Você escolhe | `secrets.h` |
+| *(opcional)* Token do bot do Telegram | @BotFather | Secret da Edge Function ([1-banco/telegram](1-banco/telegram/README.md)) |
+
+Os arquivos `.env` e `secrets.h` ficam **só no seu computador** (estão no `.gitignore`). Os modelos
+`.env.example` e `secrets.h.example` mostram o formato.
 
 ## Como o sistema funciona
 
@@ -32,29 +60,40 @@ flowchart LR
 ```
 
 1. O microfone (INMP441, via I2S) captura áudio continuamente a 16 kHz.
-2. A cada 250 ms o ESP32 transforma o último 1 s de áudio num espectrograma mel e a
-   rede neural classifica como `palma`, `campainha` ou `ruido`.
-3. Se for palma ou campainha com confiança alta (padrão 95%), o LED acende e o evento é
-   gravado na tabela `eventos` do Supabase. Nenhum áudio sai do aparelho, só o evento.
+2. A cada 250 ms o ESP32 transforma o último 1 s de áudio num espectrograma mel e a rede neural
+   classifica como `palma`, `campainha` ou `ruido`.
+3. Se for palma ou campainha com confiança alta (padrão 95%), o LED acende e o evento é gravado
+   na tabela `eventos` do Supabase. **Nenhum áudio sai do aparelho**, só o evento.
 4. A cada 30 s o ESP32 atualiza a tabela `nodes` (heartbeat), o que indica que está online.
-5. O Supabase repassa o evento em tempo real ao app web e dispara uma Edge Function que
-   envia a mensagem no Telegram.
-6. Como o ESP32 muda de lugar, a rede Wi-Fi não fica fixa no código: o portal
-   WiFiManager (rede `AlertaSons-Setup`) permite escolher a rede de cada lugar.
+5. O Supabase repassa o evento em tempo real ao app web e dispara a Edge Function do Telegram.
+6. Como o ESP32 muda de lugar, o Wi-Fi não fica fixo no código: o portal WiFiManager (rede
+   `AlertaSons-Setup`) permite escolher a rede de cada lugar.
 
 Mais diagramas (coleta e treino, firmware, nuvem) em [docs/DIAGRAMAS.md](docs/DIAGRAMAS.md).
 
-## Estrutura do repositório
+## Mapa dos arquivos
 
 ```
-ia/                      Treino da rede neural (Python) - ver ia/README.md
-  treino/                  código: features, dados, treino, exportação, coleta
-  dados/                   áudios gravados (treino e teste)
-  modelo/                  modelo treinado, gráficos, relatórios e arquivos .h
-firmware/alerta-sons-ia/ Código do ESP32 (Arduino) - ver o LEIA-ME da pasta
-app/, plugins/           App web (Nuxt 4)
-supabase/                Banco (schema.sql) e Edge Function do Telegram
-docs/                    Diagramas
+alerta-sons-esp32/
+├── setup.bat / setup.mjs        Assistente de configuração (dois cliques)
+├── 1-banco/
+│   ├── schema.sql                 Cria as tabelas eventos, nodes e config no Supabase
+│   └── telegram/                  (opcional) Edge Function que manda o alerta ao Telegram
+├── 2-site/                      App web Nuxt 4 (app/app.vue é a tela inteira)
+│   └── .env.example               modelo da configuração do site
+├── 3-aparelho/
+│   └── alerta-sons-ia/            Sketch do Arduino
+│       ├── alerta-sons-ia.ino       programa principal (Wi-Fi, Supabase, LED, comandos)
+│       ├── ia_sons.h                espectrograma + execução da rede neural
+│       ├── modelo_tflite.h          o modelo treinado (gerado, não editar)
+│       ├── config_features.h        tabelas e parâmetros do espectrograma (gerado)
+│       └── secrets.h.example        modelo da configuração do aparelho
+├── 4-ia/                        Treino da IA (opcional)
+│   ├── treino/                    scripts Python (config, features, dados, treinar, exportar...)
+│   ├── dados/                     áudios gravados: training/ e testing/
+│   ├── modelo/                    modelo treinado, gráficos e relatórios
+│   └── GUIA-IA.md                 como funciona o treino e como adicionar sons
+└── docs/                        MANUAL.md e DIAGRAMAS.md
 ```
 
 ## Tecnologias
@@ -68,70 +107,13 @@ docs/                    Diagramas
 
 ## Resultado do modelo
 
-Avaliado em áudios que a rede nunca viu (pasta `ia/dados/testing`): **92,5%** de acerto
-no modelo float e **90,0%** no modelo int8 que roda no ESP32. Detalhes e matriz de
-confusão em `ia/modelo/`.
+Avaliado em áudios que a rede nunca viu (`4-ia/dados/testing`): **92,5%** de acerto no modelo float
+e **90,0%** no modelo int8 que roda no ESP32. Detalhes e matriz de confusão em `4-ia/modelo/`.
 
-## 1. Configurar o Supabase
+## Limitações conhecidas
 
-1. No painel do projeto, abra **SQL Editor -> New query**.
-2. Cole o conteúdo de `supabase/schema.sql` e clique em **Run**. Isso cria as tabelas
-   `eventos`, `nodes` e `config`, as políticas de acesso e ativa o tempo real.
-3. Em **Project Settings -> Data API**, copie o **Project URL** e a chave
-   **anon/publishable** (nunca a `service_role`). Os dois valores são usados no app e no firmware.
-
-## 2. Rodar o app web
-
-Crie um `.env` na raiz (copie de `.env.example`):
-
-```bash
-NUXT_PUBLIC_SUPABASE_URL=https://<seu-projeto>.supabase.co
-NUXT_PUBLIC_SUPABASE_KEY=<chave anon/publishable>
-```
-
-```bash
-npm install
-npm run dev
-```
-
-O app abre em `http://localhost:3000`. Para `npm run build` use Node.js 22 ou superior.
-
-## 3. Gravar o firmware no ESP32
-
-Na Arduino IDE, instale as bibliotecas **WiFiManager** (tzapu), **Adafruit NeoPixel** e
-**Chirale_TensorFLowLite**. Abra `firmware/alerta-sons-ia/alerta-sons-ia.ino` e preencha
-no topo `SUPABASE_URL`, `SUPABASE_KEY` e `NODE_ID`.
-
-Selecione a placa **ESP32 Dev Module** e, em **Tools -> Partition Scheme**,
-**Huge APP (3MB No OTA/1MB SPIFFS)** (o programa ocupa 99% da partição padrão).
-
-Na primeira vez (ou ao enviar `w` pelo Serial Monitor) o ESP32 cria a rede
-**AlertaSons-Setup**. Conecte o celular nela, escolha a rede Wi-Fi do lugar e a senha.
-Isso fica salvo no aparelho.
-
-Comandos no Serial Monitor (115200): `s 1` liga o envio ao Supabase (começa desligado),
-`l 1` mostra as probabilidades em tempo real, `w` reconfigura o Wi-Fi, `?` lista tudo.
-
-## 4. Alerta no Telegram
-
-1. No Telegram, fale com **@BotFather**, envie `/newbot` e guarde o token.
-2. No Supabase, crie a Edge Function `notificar-telegram` com o conteúdo de
-   `supabase/functions/notificar-telegram/index.ts` e adicione o secret `TELEGRAM_BOT_TOKEN`.
-3. Em **Database -> Webhooks**, crie um hook na tabela `eventos`, evento `INSERT`,
-   tipo Supabase Edge Functions, função `notificar-telegram`.
-4. A pessoa fala com **@userinfobot**, copia o seu Id e cola no app web, na seção
-   **Alerta no Telegram**.
-
-## Como funciona o app
-
-- **Alerta em tela**: a tela inteira pisca com ícone e texto grande (campainha ou palma).
-- **Histórico**: últimos eventos, com filtro por tipo e por nó, e opção de marcar como visto.
-- **Status por nó**: online ou offline, pelo heartbeat.
-- **Telegram**: a pessoa cadastra o próprio chat ID uma vez.
-
-## Melhorar a IA
-
-Grave mais sons reais (sala quieta, TV, o aparelho no bolso) com `ia/treino/coletar_serial.py`,
-retreine e copie os dois arquivos `.h` gerados para a pasta do firmware. O passo a passo
-está em [ia/README.md](ia/README.md).
-
+- **Segurança:** as regras do banco deixam qualquer pessoa com a chave pública ler, inserir e apagar
+  eventos. Serve para o projeto de estudo; para uso real seria preciso login (Supabase Auth).
+- **Dados de treino:** são poucos (70 palmas, 80 campainhas) e de um só ambiente. Gravar mais sons
+  reais é a melhor forma de melhorar a IA ([guia](4-ia/GUIA-IA.md)).
+- **Telegram:** envia para uma única conversa.
