@@ -107,13 +107,33 @@ function acharPython() {
   return null
 }
 
+// Devolve { origem } se achar a Arduino IDE, ou null. Cobre a versão baixada do site
+// (2.x e a antiga 1.8), a do macOS e a da Microsoft Store (que fica em WindowsApps,
+// uma pasta que não dá para listar, então é perguntada ao Windows).
 function acharArduinoIDE() {
+  const pf = process.env.ProgramFiles || ''
+  const pf86 = process.env['ProgramFiles(x86)'] || ''
   const locais = [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Arduino IDE', 'Arduino IDE.exe'),
-    path.join(process.env.ProgramFiles || '', 'Arduino IDE', 'Arduino IDE.exe'),
+    path.join(pf, 'Arduino IDE', 'Arduino IDE.exe'),
+    path.join(pf86, 'Arduino IDE', 'Arduino IDE.exe'),
+    path.join(pf, 'Arduino', 'arduino.exe'),
+    path.join(pf86, 'Arduino', 'arduino.exe'),
     '/Applications/Arduino IDE.app',
+    '/Applications/Arduino.app',
   ]
-  return locais.find((p) => p && fs.existsSync(p)) || null
+  const achado = locais.find((p) => p && fs.existsSync(p))
+  if (achado) return { origem: achado }
+
+  if (WIN) {
+    const r = rodar('powershell', ['-NoProfile', '-Command',
+      '"(Get-AppxPackage -Name *Arduino* | Select-Object -First 1).Version"'])
+    const versao = (r.stdout || '').trim()
+    if (r.status === 0 && /^\d+(\.\d+)+$/.test(versao)) {
+      return { origem: `Microsoft Store, versão ${versao.split('.').slice(0, 3).join('.')}` }
+    }
+  }
+  return null
 }
 
 function copiarParaAreaDeTransferencia(texto) {
@@ -259,7 +279,8 @@ function mostrarRequisitos() {
   linhaRelatorio(git ? OK : AVISO, git || 'Git não encontrado', git ? '' : 'só é preciso para baixar/atualizar o projeto')
 
   const ide = acharArduinoIDE()
-  linhaRelatorio(ide ? OK : AVISO, ide ? 'Arduino IDE encontrada' : 'Arduino IDE não encontrada', ide ? '' : 'necessária para gravar o ESP32 (arduino.cc/en/software)')
+  linhaRelatorio(ide ? OK : AVISO, ide ? 'Arduino IDE encontrada' : 'Arduino IDE não encontrada',
+    ide ? (/[\\/]/.test(ide.origem) ? '' : ide.origem) : 'necessária para gravar o ESP32 (arduino.cc/en/software)')
 
   const py = acharPython()
   if (py) {
