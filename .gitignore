@@ -30,3 +30,6 @@ __pycache__
 
 # Segredos do aparelho (ESP32)
 secrets.h
+
+# Bancos salvos pelo setup (URL + chave)
+.setup-perfis.json

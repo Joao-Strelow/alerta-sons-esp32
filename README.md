@@ -39,6 +39,22 @@ Só **três valores**, e o `setup.bat` coloca cada um no lugar certo:
 Os arquivos `.env` e `secrets.h` ficam **só no seu computador** (estão no `.gitignore`). Os modelos
 `.env.example` e `secrets.h.example` mostram o formato.
 
+## Mudar a configuração depois (trocar de banco, nome do aparelho)
+
+Rode o `setup.bat` de novo e escolha a **opção 3 · Editar configurações**. Ela mostra o que está
+configurado hoje (chaves parcialmente ocultas) e permite:
+
+- **Trocar o banco** (URL e chave do Supabase), no site, no aparelho ou nos dois;
+- **Mudar o nome do aparelho** (`no1`, `no2`...) e se ele **já envia ao Supabase ao ligar**;
+- **Guardar vários bancos com um nome** (ex.: `antigo`, `novo`) e alternar entre eles sem digitar tudo de novo
+  (ficam em `.setup-perfis.json`, só no seu computador).
+
+Duas lembranças depois de editar:
+
+- **Site:** reinicie o `npm run dev`.
+- **Aparelho:** URL, chave e nome ficam gravados dentro do ESP32, então é preciso **gravar o `.ino` de novo**
+  (com o cabo USB) para a mudança valer. O assistente avisa quando for o caso.
+
 ## Como o sistema funciona
 
 ```mermaid

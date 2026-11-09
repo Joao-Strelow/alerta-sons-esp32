@@ -7,7 +7,9 @@
 //   - pede a URL e a chave do Supabase e TESTA se funcionam;
 //   - cria o site (.env) e o firmware (secrets.h) com os mesmos valores;
 //   - copia o SQL do banco para a área de transferência e abre o painel;
-//   - instala as dependências do site (npm) e da IA (Python, opcional).
+//   - instala as dependências do site (npm) e da IA (Python, opcional);
+//   - permite editar a configuração depois (trocar de banco, nome do aparelho,
+//     envio ao ligar) e guardar vários bancos para alternar entre eles.
 //
 // Como usar: dê dois cliques em "setup.bat" (ou rode "node setup.mjs").
 // Opções:   --verificar   só mostra o estado atual, sem perguntar nada
@@ -491,6 +493,168 @@ async function testarConexao() {
   return (await testarSupabase(url, chave)).estado === 'ok'
 }
 
+// ---------------------------------------------------------------------------
+// Editar configurações e bancos salvos (perfis)
+// ---------------------------------------------------------------------------
+// Os perfis ficam em ".setup-perfis.json" (na raiz, fora do GitHub) e guardam só
+// URL + chave de cada banco, para alternar entre eles sem digitar tudo de novo.
+const ARQ_PERFIS = path.join(RAIZ, '.setup-perfis.json')
+
+function mascarar(chave) {
+  if (!chave) return '(vazia)'
+  return chave.length <= 16 ? '***' : `${chave.slice(0, 12)}…${chave.slice(-4)}`
+}
+
+function lerPerfis() {
+  try {
+    return JSON.parse(fs.readFileSync(ARQ_PERFIS, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function gravarPerfis(perfis) {
+  fs.writeFileSync(ARQ_PERFIS, JSON.stringify(perfis, null, 2))
+}
+
+function mostrarConfig() {
+  const env = lerEnv()
+  const sec = lerSecrets()
+  titulo('Configuração atual')
+  console.log(`  ${negrito('Site')}  ${cinza('(2-site/.env)')}
+      URL:    ${env.url || cinza('(não definida)')}
+      Chave:  ${mascarar(env.chave)}
+  ${negrito('Aparelho')}  ${cinza('(3-aparelho/alerta-sons-ia/secrets.h)')}
+      URL:    ${sec.url || cinza('(não definida)')}
+      Chave:  ${mascarar(sec.chave)}
+      Nome:   ${sec.nodeId || cinza('(não definido)')}
+      Envio ao Supabase ao ligar:  ${sec.nodeId || sec.url ? (sec.enviarPadrao ? 'ligado' : 'desligado') : cinza('-')}`)
+  if (env.url && sec.url && (env.url !== sec.url || env.chave !== sec.chave)) {
+    linhaRelatorio(AVISO, 'O site e o aparelho usam bancos DIFERENTES.', 'eventos do aparelho não aparecerão no site')
+  }
+}
+
+// Pergunta onde aplicar uma mudança de banco. Devolve 'ambos', 'site' ou 'aparelho'.
+async function escolherAlvo() {
+  console.log(`
+  Aplicar em:
+    ${negrito('1')}  Site e aparelho ${cinza('(recomendado: os dois precisam usar o mesmo banco)')}
+    ${negrito('2')}  Só no site
+    ${negrito('3')}  Só no aparelho`)
+  const r = await perguntar('Opção', '1')
+  return r === '2' ? 'site' : r === '3' ? 'aparelho' : 'ambos'
+}
+
+// Grava URL/chave nos arquivos escolhidos e confere o banco novo.
+async function aplicarBanco(url, chave, alvo) {
+  if (alvo !== 'aparelho') {
+    gravarEnv(url, chave)
+    linhaRelatorio(OK, 'Site atualizado (2-site/.env).', 'reinicie o "npm run dev" para valer')
+  }
+  if (alvo !== 'site') {
+    const sec = lerSecrets()
+    gravarSecrets({ url, chave, nodeId: sec.nodeId || 'no1', enviarPadrao: sec.enviarPadrao })
+    linhaRelatorio(OK, 'Aparelho atualizado (secrets.h).', 'GRAVE O ESP32 DE NOVO na Arduino IDE para valer')
+  }
+  await passoBanco(url, chave)
+}
+
+async function oferecerSalvarPerfil(url, chave) {
+  const nome = await perguntar('Salvar este banco com um nome para usar depois? (ex.: antigo, novo; Enter = não salvar)')
+  if (!nome) return
+  if (!/^[\w -]{1,30}$/.test(nome)) return linhaRelatorio(ERRO, 'Nome inválido: use até 30 letras, números, espaço, _ ou -.')
+  const perfis = lerPerfis()
+  perfis[nome] = { url, chave }
+  gravarPerfis(perfis)
+  linhaRelatorio(OK, `Banco salvo como "${nome}".`)
+}
+
+async function escolherPerfil(perfis, texto) {
+  const nomes = Object.keys(perfis)
+  if (!nomes.length) {
+    linhaRelatorio(AVISO, 'Nenhum banco salvo ainda.', 'use as opções 1 e 5 para salvar')
+    return null
+  }
+  nomes.forEach((n, i) => console.log(`    ${negrito(String(i + 1))}  ${n}  ${cinza(perfis[n].url)}`))
+  const r = await perguntar(texto)
+  return nomes.find((n, i) => n === r || String(i + 1) === r) || null
+}
+
+async function editarConfig() {
+  for (;;) {
+    mostrarConfig()
+    const perfis = lerPerfis()
+    const nomes = Object.keys(perfis)
+    console.log(`
+${negrito('O que você quer editar?')}
+  ${negrito('1')}  Trocar o banco ${cinza('(URL e chave do Supabase)')}
+  ${negrito('2')}  Nome do aparelho
+  ${negrito('3')}  Envio ao Supabase ao ligar ${cinza('(sim/não)')}
+  ${negrito('4')}  Usar um banco salvo ${cinza(nomes.length ? `(${nomes.join(', ')})` : '(nenhum salvo ainda)')}
+  ${negrito('5')}  Salvar a configuração atual com um nome ${cinza('(ex.: "antigo", "novo")')}
+  ${negrito('6')}  Apagar um banco salvo
+  ${negrito('0')}  Voltar
+`)
+    const op = await perguntar('Opção', '0')
+    if (op === '0' || entradaEncerrada) return
+
+    const env = lerEnv()
+    const sec = lerSecrets()
+    const atual = { url: env.url || sec.url, chave: env.chave || sec.chave }
+
+    if (op === '1') {
+      const cred = await pedirCredenciais(atual)
+      if (!cred) return
+      const alvo = await escolherAlvo()
+      await aplicarBanco(cred.url, cred.chave, alvo)
+      await oferecerSalvarPerfil(cred.url, cred.chave)
+    } else if (op === '2') {
+      if (!sec.url) {
+        linhaRelatorio(ERRO, 'O aparelho ainda não foi configurado.', 'use a configuração guiada (opção 1 do menu principal)')
+      } else {
+        let nodeId = ''
+        for (;;) {
+          nodeId = await perguntar('Novo nome do aparelho (letras/números, sem espaço)', sec.nodeId || 'no1')
+          if (/^[a-zA-Z0-9_-]{1,15}$/.test(nodeId)) break
+          console.log('  ' + vermelho('Use de 1 a 15 caracteres: letras, números, _ ou -.'))
+          if (entradaEncerrada) return
+        }
+        gravarSecrets({ ...sec, nodeId })
+        linhaRelatorio(OK, `Nome do aparelho: ${nodeId}.`, 'GRAVE O ESP32 DE NOVO para valer')
+      }
+    } else if (op === '3') {
+      if (!sec.url) {
+        linhaRelatorio(ERRO, 'O aparelho ainda não foi configurado.', 'use a configuração guiada (opção 1 do menu principal)')
+      } else {
+        const ligado = await confirmar('Já começar enviando os alertas ao Supabase ao ligar?', sec.enviarPadrao)
+        gravarSecrets({ ...sec, enviarPadrao: ligado })
+        linhaRelatorio(OK, `Envio ao ligar: ${ligado ? 'ligado' : 'desligado'}.`, 'GRAVE O ESP32 DE NOVO para valer')
+      }
+    } else if (op === '4') {
+      const nome = await escolherPerfil(perfis, 'Qual banco usar? (número ou nome)')
+      if (nome) {
+        const alvo = await escolherAlvo()
+        await aplicarBanco(perfis[nome].url, perfis[nome].chave, alvo)
+      }
+    } else if (op === '5') {
+      if (!atual.url || !atual.chave) {
+        linhaRelatorio(ERRO, 'Não há configuração para salvar ainda.')
+      } else {
+        await oferecerSalvarPerfil(atual.url, atual.chave)
+      }
+    } else if (op === '6') {
+      const nome = await escolherPerfil(perfis, 'Qual apagar? (número ou nome)')
+      if (nome && (await confirmar(`Apagar o banco salvo "${nome}"? (só some desta lista, o Supabase não é afetado)`, false))) {
+        delete perfis[nome]
+        gravarPerfis(perfis)
+        linhaRelatorio(OK, 'Apagado da lista.')
+      }
+    }
+    if (entradaEncerrada) return
+    await perguntar('\nAperte Enter para continuar')
+  }
+}
+
 async function menu(py) {
   for (;;) {
     mostrarEstadoProjeto()
@@ -498,7 +662,7 @@ async function menu(py) {
 ${negrito('O que você quer fazer?')}
   ${negrito('1')}  Configuração guiada ${cinza('(recomendado na primeira vez)')}
   ${negrito('2')}  Testar conexão com o Supabase
-  ${negrito('3')}  Só reconfigurar o aparelho (ESP32): nome, envio ao ligar
+  ${negrito('3')}  Editar configurações ${cinza('(trocar de banco, nome do aparelho, envio ao ligar)')}
   ${negrito('4')}  Preparar o ambiente da IA (Python) ${cinza('(opcional)')}
   ${negrito('5')}  Ver o que está instalado no computador
   ${negrito('0')}  Sair
@@ -506,14 +670,8 @@ ${negrito('O que você quer fazer?')}
     const op = await perguntar('Opção', '1')
     if (op === '1') await configuracaoGuiada(py)
     else if (op === '2') await testarConexao()
-    else if (op === '3') {
-      const sec = lerSecrets()
-      const env = lerEnv()
-      const url = sec.url || env.url
-      const chave = sec.chave || env.chave
-      if (!url || !chave) linhaRelatorio(ERRO, 'Sem URL/chave ainda. Use a opção 1.')
-      else await passoAparelho(url, chave, sec)
-    } else if (op === '4') await passoIA(py)
+    else if (op === '3') await editarConfig()
+    else if (op === '4') await passoIA(py)
     else if (op === '5') mostrarRequisitos()
     else if (op === '0' || entradaEncerrada) break
     if (entradaEncerrada) break
